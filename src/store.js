@@ -33,39 +33,84 @@ const useStore = create((set) => ({
   setCurrentFile: (file) => set({ currentFile: file }),
 
   projectFiles: [
-    { id: 'proj1', name: 'Novel Project', type: 'folder', children: [
-      // Add dummy content to file objects
-      { id: 'chap1', name: 'Chapter 1.md', type: 'file', parent: 'proj1', content: '# Chapter 1\n\nIt was a dark and stormy night...' },
-      { id: 'chars', name: 'Characters', type: 'folder', parent: 'proj1', children: [
-        { id: 'hero', name: 'Hero.md', type: 'file', parent: 'chars', content: '## Hero\n\n- Brave\n- Resourceful' }
+    { id: 'proj1', itemId: 'project-proj1', name: 'Novel Project', type: 'folder', children: [
+      {
+        id: 'chap1', itemId: 'file-proj1-chap1',
+        name: 'Chapter 1.md',
+        type: 'file',
+        parent: 'proj1',
+        project_id: 'proj1',
+        content: '# Chapter 1\n\nIt was a dark and stormy night...'
+      },
+      { id: 'chars', itemId: 'folder-proj1-chars', name: 'Characters', type: 'folder', parent: 'proj1', project_id: 'proj1', children: [
+        {
+            id: 'hero', itemId: 'file-proj1-hero',
+            name: 'Hero.md',
+            type: 'file',
+            parent: 'chars',
+            project_id: 'proj1',
+            content: '## Hero\n\n- Brave\n- Resourceful'
+        }
       ]}
     ]},
-    { id: 'proj2', name: 'Script Project', type: 'folder', children: [
-        { id: 'scene1', name: 'Scene1.fountain', type: 'file', parent: 'proj2', content: 'INT. COFFEE SHOP - DAY\n\nBOB sits drinking coffee.\n\nBOB\n(To himself)\nI need more coffee.' }
+    { id: 'proj2', itemId: 'project-proj2', name: 'Script Project', type: 'folder', children: [
+        {
+            id: 'scene1', itemId: 'file-proj2-scene1',
+            name: 'Scene1.fountain',
+            type: 'file',
+            parent: 'proj2',
+            project_id: 'proj2',
+            content: 'INT. COFFEE SHOP - DAY\n\nBOB sits drinking coffee.\n\nBOB\n(To himself)\nI need more coffee.'
+        }
     ] }
   ],
   setProjectFiles: (files) => set({ projectFiles: files }),
 
-  // --- Action to update content (we'll use this later) ---
-  updateFileContent: (fileId, newContent) => set((state) => ({
+  // --- NEW: Action to add a project ---
+  addProject: (project) => set((state) => ({
+      // Ensure the project has both id and itemId before adding
+      // Assumes the input 'project' object is already formatted correctly
+      projectFiles: [...state.projectFiles, project]
+  })),
+
+  // --- NEW: Action to add a file to a specific project ---
+  addFileToProject: (projectId, file) => set((state) => ({
     projectFiles: state.projectFiles.map(p => {
-      if (p.children) {
-        // Basic recursive update - needs improvement for deep nesting & efficiency
-        const updateChildren = (nodes) => nodes.map(node => {
-          if (node.id === fileId) {
-            return { ...node, content: newContent };
-          }
-          if (node.children) {
-            return { ...node, children: updateChildren(node.children) };
-          }
-          return node;
-        });
-        return { ...p, children: updateChildren(p.children) };
+      // Match using the database ID (p.id)
+      if (p.id === projectId) {
+        // Add the new file (ensure it has id and itemId)
+        return { ...p, children: [...(p.children || []), file] };
       }
       return p;
     })
   })),
-  // ----------------------------------------------------------
+
+  // --- Action to update content (ensure it uses numeric id) ---
+  updateFileContent: (fileId, newContent) => set((state) => {
+      // Helper function to recursively find and update the file by NUMERIC id
+      const updateNodeRecursively = (nodes) => nodes.map(node => {
+          if (node.type === 'file' && node.id === fileId) {
+            // Found the file, update its content
+            console.log(`Updating content in store for file ID: ${fileId}`);
+            return { ...node, content: newContent };
+          }
+          if (node.children) {
+            // Recursively search in children
+            const updatedChildren = updateNodeRecursively(node.children);
+            // Return node with updated children if any change occurred
+            if (updatedChildren !== node.children) {
+                return { ...node, children: updatedChildren };
+            }
+          }
+          // Return node unchanged if not the target and no children updated
+          return node;
+      });
+
+      return {
+          projectFiles: updateNodeRecursively(state.projectFiles)
+      };
+  }),
+  // -------------------------------------------------------------
 
   sidebarWidth: 240,
   chatPanelWidth: 300,

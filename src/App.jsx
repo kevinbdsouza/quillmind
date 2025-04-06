@@ -1,7 +1,7 @@
 // src/App.js
 import React from 'react';
 import Box from '@mui/material/Box';
-import { Routes, Route, Link } from 'react-router-dom'; // Import routing components
+import { Routes, Route, Link, Navigate, Outlet } from 'react-router-dom'; // Import Navigate and Outlet
 import CssBaseline from '@mui/material/CssBaseline'; // Normalizes styles
 
 // Import the components we created
@@ -15,6 +15,20 @@ import RegisterPage from './pages/RegisterPage.jsx';
 
 // Import the store hook
 import useStore from './store';
+
+// --- Protected Route Component ---
+function ProtectedRoute() {
+  const isAuthenticated = useStore((state) => state.isAuthenticated);
+
+  if (!isAuthenticated) {
+    // If not authenticated, redirect to the login page
+    return <Navigate to="/login" replace />;
+  }
+
+  // If authenticated, render the child routes (in this case, the MainAppLayout)
+  // Outlet is used by parent routes to render their child route elements.
+  return <Outlet />;
+}
 
 // Main application layout component
 function MainAppLayout() {
@@ -41,23 +55,26 @@ function MainAppLayout() {
 
 
 function App() {
-  // We'll add auth state check here later
+  // Get auth state to potentially adjust logic if needed, though ProtectedRoute handles the main check
+  const isAuthenticated = useStore((state) => state.isAuthenticated);
 
   return (
     <>
       <CssBaseline /> {/* Apply baseline styles */}
       {/* Define application routes */}
       <Routes>
-        {/* Route for the main application layout */}
-        <Route path="/" element={<MainAppLayout />} />
+        {/* Public routes */}
+        <Route path="/login" element={!isAuthenticated ? <LoginPage /> : <Navigate to="/" replace />} />
+        <Route path="/register" element={!isAuthenticated ? <RegisterPage /> : <Navigate to="/" replace />} />
 
-        {/* Route for the login page */}
-        <Route path="/login" element={<LoginPage />} />
+        {/* Protected routes */}
+        <Route element={<ProtectedRoute />}>
+          {/* All routes nested here require authentication */}
+          <Route path="/" element={<MainAppLayout />} />
+          {/* Add other protected routes here later (e.g., /settings) */}
+        </Route>
 
-        {/* Route for the registration page */}
-        <Route path="/register" element={<RegisterPage />} />
-
-        {/* Add a catch-all or Not Found route later if needed */}
+        {/* Optional: Catch-all route for 404 Not Found */}
         {/* <Route path="*" element={<div>Page Not Found</div>} /> */}
       </Routes>
     </>
