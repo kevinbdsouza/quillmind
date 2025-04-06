@@ -1,0 +1,16 @@
+# quillmind/.gitignore
+
+# Dependencies
+/node_modules
+
+# Vite
+.vite/
+dist/
+
+# IDE / OS Files
+.DS_Store
+.vscode/
+*.log
+
+# Environment variables
+backend/.env
