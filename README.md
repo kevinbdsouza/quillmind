@@ -1,6 +1,6 @@
 # QuillMind
 
-QuillMind is an AI‑powered writing assistant built with **Electron** and **React**. The project also includes a small Node.js API in the `backend` folder.
+QuillMind is an AI‑powered writing assistant built with **Electron** and **React**. 
 
 ## Features
 
