@@ -7,9 +7,6 @@ pages_build_output_dir = "./dist"
 # This is crucial for making libraries like 'pg' work.
 compatibility_flags = ["nodejs_compat"] 
 
-[assets]
-directory = "./dist"
-
 [[d1_databases]]
 binding = "DB" # available in your Function as env.DB
 database_name = "quillmind-db"
