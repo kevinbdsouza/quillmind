@@ -4,7 +4,6 @@ QuillMind is an AI‑powered writing assistant.
 
 ## Features
 
-- Electron desktop shell
 - React front end powered by Vite
 - Express backend with JWT authentication
 
