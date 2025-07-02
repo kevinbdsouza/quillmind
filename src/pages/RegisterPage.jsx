@@ -1,7 +1,20 @@
 // src/pages/RegisterPage.jsx
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { Container, Box, Typography, TextField, Button, Alert, CircularProgress } from '@mui/material';
+import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import {
+  Container,
+  Box,
+  Typography,
+  TextField,
+  Button,
+  Alert,
+  CircularProgress,
+  Paper,
+  Avatar,
+  Grid,
+  Link,
+} from '@mui/material';
+import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import { registerUser } from '../apiService'; // Import API function
 
 function RegisterPage() {
@@ -38,16 +51,50 @@ function RegisterPage() {
     }
   };
 
+  const textFieldStyles = {
+    // Target the input text and labels
+    '& .MuiInputBase-input': {
+      color: '#1A202C', // Ensure text is dark
+    },
+    '& .MuiInputLabel-root': {
+      color: '#6f7680', // A pleasant grey for labels
+    },
+    // Focused state
+    '& label.Mui-focused': {
+      color: 'primary.main', // Orange color on focus
+    },
+    // Outlined input styles
+    '& .MuiOutlinedInput-root': {
+      '& fieldset': {
+        borderColor: '#b0b8c4', // A neutral border
+      },
+      '&:hover fieldset': {
+        borderColor: '#1A202C', // Darker border on hover
+      },
+      '&.Mui-focused fieldset': {
+        borderColor: 'primary.main', // Orange border on focus
+      },
+    },
+  };
+
   return (
     <Container component="main" maxWidth="xs">
-      <Box
+      <Paper
+        elevation={6}
         sx={{
           marginTop: 8,
+          padding: 4,
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
+          backgroundColor: '#FAF9F6',
+          color: '#1A202C',
+          borderRadius: 2,
         }}
       >
+        <Avatar sx={{ m: 1, bgcolor: 'secondary.main' }}>
+          <LockOutlinedIcon />
+        </Avatar>
         <Typography component="h1" variant="h5">
           Sign up for QuillMind
         </Typography>
@@ -57,12 +104,12 @@ function RegisterPage() {
           </Alert>
         )}
         {success && (
-           <Alert severity="success" sx={{ width: '100%', mt: 2 }}>
-            {success} - <Link to="/login">Login Now</Link>
+          <Alert severity="success" sx={{ width: '100%', mt: 2 }}>
+            {success} - <RouterLink to="/login">Login Now</RouterLink>
           </Alert>
         )}
-        <Box component="form" onSubmit={handleSubmit} noValidate sx={{ mt: 1 }}>
-           <TextField
+        <Box component="form" onSubmit={handleSubmit} noValidate sx={{ mt: 3 }}>
+          <TextField
             margin="normal"
             required
             fullWidth
@@ -74,6 +121,7 @@ function RegisterPage() {
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             disabled={loading}
+            sx={textFieldStyles}
           />
           <TextField
             margin="normal"
@@ -86,6 +134,7 @@ function RegisterPage() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             disabled={loading}
+            sx={textFieldStyles}
           />
           <TextField
             margin="normal"
@@ -99,6 +148,7 @@ function RegisterPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             disabled={loading}
+            sx={textFieldStyles}
           />
           <Button
             type="submit"
@@ -107,15 +157,17 @@ function RegisterPage() {
             sx={{ mt: 3, mb: 2 }}
             disabled={loading}
           >
-            {loading ? <CircularProgress size={24} /> : 'Sign Up'}
+            {loading ? <CircularProgress size={24} color="inherit" /> : 'Sign Up'}
           </Button>
-          <Box textAlign="center">
-            <Link to="/login" variant="body2">
-              {"Already have an account? Sign In"}
-            </Link>
-          </Box>
+          <Grid container justifyContent="flex-end">
+            <Grid item>
+              <Link component={RouterLink} to="/login" variant="body2">
+                {"Already have an account? Sign In"}
+              </Link>
+            </Grid>
+          </Grid>
         </Box>
-      </Box>
+      </Paper>
     </Container>
   );
 }

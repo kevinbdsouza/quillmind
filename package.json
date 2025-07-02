@@ -2,35 +2,38 @@
     "name": "quillmind",
     "version": "0.1.0",
     "description": "AI-Powered Writing Assistant",
-    "main": "main.js",
     "author": "Kevin Dsouza",
     "license": "MIT",
     "scripts": {
         "dev": "vite",
-        "start": "electron .",
         "build": "vite build",
         "preview": "vite preview",
-        "install-react-deps": "npm install react react-dom",
-        "install-electron-deps": "npm install --save-dev electron"
+        "pages:dev": "wrangler pages dev -- npm run dev",
+        "pages:deploy": "npm run build && wrangler pages deploy ./dist",
+        "apply-schema": "node scripts/apply-schema.js"
     },
     "dependencies": {
-        "@emotion/react": "^11.14.0",
-        "@emotion/styled": "^11.14.0",
-        "@monaco-editor/react": "^4.7.0",
-        "@mui/icons-material": "^7.0.1",
-        "@mui/material": "^7.0.1",
-        "@mui/x-tree-view": "^7.28.1",
-        "axios": "^1.8.4",
+        "@emotion/react": "^11.11.4",
+        "@emotion/styled": "^11.11.5",
+        "@monaco-editor/react": "^4.6.0",
+        "@mui/icons-material": "^5.15.21",
+        "@mui/material": "^5.15.21",
+        "@mui/x-tree-view": "^7.9.0",
+        "axios": "^1.7.2",
+        "bcryptjs": "^2.4.3",
+        "dotenv": "^16.4.5",
+        "jsonwebtoken": "^9.0.2",
         "jwt-decode": "^4.0.0",
-        "monaco-editor": "^0.52.2",
-        "react": "^18.3.0",
-        "react-dom": "^18.3.0",
-        "react-router-dom": "^7.5.0",
-        "zustand": "^5.0.3"
+        "react": "^18.2.0",
+        "react-dom": "^18.2.0",
+        "react-icons": "^5.5.0",
+        "react-markdown": "^10.1.0",
+        "react-router-dom": "^6.24.1",
+        "zustand": "^4.5.4"
     },
     "devDependencies": {
-        "@vitejs/plugin-react": "^4.3.4",
-        "electron": "^35.0.0",
-        "vite": "^6.2.5"
+        "@vitejs/plugin-react": "^4.3.1",
+        "vite": "^5.3.3",
+        "wrangler": "^4.0.0"
     }
 }

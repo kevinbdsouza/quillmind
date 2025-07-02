@@ -1,6 +1,7 @@
 // src/store.js
 import { create } from 'zustand';
-import { jwtDecode } from 'jwt-decode'; 
+import { jwtDecode } from 'jwt-decode';
+import { shallow } from 'zustand/shallow';
 
 const getInitialAuthState = () => {
   const token = localStorage.getItem('accessToken');
@@ -27,50 +28,192 @@ const getInitialAuthState = () => {
   return { isAuthenticated: false, token: null, user: null };
 };
 
+// --- Recursive helper to update a file in the tree ---
+const updateFileInTree = (tree, fileId, newContent) => {
+  return tree.map(node => {
+    if (node.file_id === fileId) {
+      return { ...node, content: newContent };
+    }
+    if (node.children && node.children.length > 0) {
+      return { ...node, children: updateFileInTree(node.children, fileId, newContent) };
+    }
+    return node;
+  });
+};
 
-const useStore = create((set) => ({
-  currentFile: null,
-  setCurrentFile: (file) => set({ currentFile: file }),
+const useStore = create((set, get) => ({
+  ...getInitialAuthState(),
 
-  projectFiles: [
-    { id: 'proj1', name: 'Novel Project', type: 'folder', children: [
-      // Add dummy content to file objects
-      { id: 'chap1', name: 'Chapter 1.md', type: 'file', parent: 'proj1', content: '# Chapter 1\n\nIt was a dark and stormy night...' },
-      { id: 'chars', name: 'Characters', type: 'folder', parent: 'proj1', children: [
-        { id: 'hero', name: 'Hero.md', type: 'file', parent: 'chars', content: '## Hero\n\n- Brave\n- Resourceful' }
-      ]}
-    ]},
-    { id: 'proj2', name: 'Script Project', type: 'folder', children: [
-        { id: 'scene1', name: 'Scene1.fountain', type: 'file', parent: 'proj2', content: 'INT. COFFEE SHOP - DAY\n\nBOB sits drinking coffee.\n\nBOB\n(To himself)\nI need more coffee.' }
-    ] }
-  ],
+  // --- Project & File State ---
+  projects: [], // List of user's projects
+  currentProject: null, // The currently selected project object
+  projectFiles: [], // The file tree for the current project
+  openFiles: [], // Array of currently open file objects
+  activeFileId: null, // ID of the currently active file in the editor
+
+  setProjects: (projects) => set({ projects }),
+  setCurrentProject: (project) => {
+    // Also clear project files and open files when project changes
+    set({
+      currentProject: project,
+      projectFiles: [],
+      openFiles: [],
+      activeFileId: null,
+    });
+  },
   setProjectFiles: (files) => set({ projectFiles: files }),
 
-  // --- Action to update content (we'll use this later) ---
+  openFile: (fileToOpen) => {
+    const { openFiles } = get();
+    // Check if the file is already open
+    if (!openFiles.find(f => f.file_id === fileToOpen.file_id)) {
+      set(state => ({
+        openFiles: [...state.openFiles, fileToOpen],
+      }));
+    }
+    // Set it as active regardless
+    set({ activeFileId: fileToOpen.file_id });
+  },
+
+  closeFile: (fileIdToClose) => set(state => {
+    const { openFiles, activeFileId } = state;
+    const fileIndex = openFiles.findIndex(f => f.file_id === fileIdToClose);
+
+    if (fileIndex === -1) return {}; // File not found
+
+    const newOpenFiles = openFiles.filter(f => f.file_id !== fileIdToClose);
+    let newActiveFileId = activeFileId;
+
+    // If the closed file was the active one, determine the next active file
+    if (activeFileId === fileIdToClose) {
+      if (newOpenFiles.length === 0) {
+        newActiveFileId = null; // No files left
+      } else {
+        // Try to activate the file to the right, or the one to the left if it was the last one
+        const nextIndex = Math.min(fileIndex, newOpenFiles.length - 1);
+        newActiveFileId = newOpenFiles[nextIndex].file_id;
+      }
+    }
+
+    return { openFiles: newOpenFiles, activeFileId: newActiveFileId };
+  }),
+
+  setActiveFileId: (fileId) => set({ activeFileId: fileId }),
+
+  // --- Action to update content (now works on a tree and openFiles) ---
   updateFileContent: (fileId, newContent) => set((state) => ({
-    projectFiles: state.projectFiles.map(p => {
-      if (p.children) {
-        // Basic recursive update - needs improvement for deep nesting & efficiency
-        const updateChildren = (nodes) => nodes.map(node => {
-          if (node.id === fileId) {
-            return { ...node, content: newContent };
+    projectFiles: updateFileInTree(state.projectFiles, fileId, newContent),
+    // Also update the file in openFiles if it's there
+    openFiles: state.openFiles.map(file =>
+      file.file_id === fileId ? { ...file, content: newContent } : file
+    ),
+  })),
+
+  // --- Handle file operations for editor synchronization ---
+  handleFileDeleted: (deletedFileId) => set((state) => {
+    const { openFiles, activeFileId, projectFiles } = state;
+    
+    // Helper function to find all file IDs within a folder (recursively)
+    const getAllFileIdsInFolder = (folderId, fileTree) => {
+      const fileIds = [];
+      
+      const findFilesRecursively = (nodes) => {
+        for (const node of nodes) {
+          if (node.file_id === folderId) {
+            // Found the folder, now collect all file IDs within it
+            const collectFileIds = (children) => {
+              if (!children) return;
+              for (const child of children) {
+                if (child.type === 'file') {
+                  fileIds.push(child.file_id);
+                } else if (child.type === 'folder' && child.children) {
+                  collectFileIds(child.children);
+                }
+              }
+            };
+            collectFileIds(node.children);
+            return;
           }
           if (node.children) {
-            return { ...node, children: updateChildren(node.children) };
+            findFilesRecursively(node.children);
           }
-          return node;
-        });
-        return { ...p, children: updateChildren(p.children) };
+        }
+      };
+      
+      findFilesRecursively(fileTree);
+      return fileIds;
+    };
+    
+    // Find the deleted item
+    const findNodeById = (nodes, id) => {
+      for (const node of nodes) {
+        if (node.file_id === id) return node;
+        if (node.children) {
+          const found = findNodeById(node.children, id);
+          if (found) return found;
+        }
       }
-      return p;
-    })
-  })),
-  // ----------------------------------------------------------
+      return null;
+    };
+    
+    const deletedNode = findNodeById(projectFiles, deletedFileId);
+    if (!deletedNode) return {}; // Node not found
+    
+    let filesToClose = [];
+    
+    if (deletedNode.type === 'file') {
+      // Single file deletion
+      filesToClose = [deletedFileId];
+    } else if (deletedNode.type === 'folder') {
+      // Folder deletion - get all files within the folder
+      filesToClose = getAllFileIdsInFolder(deletedFileId, projectFiles);
+      // Also add the folder itself in case it was somehow in openFiles
+      filesToClose.push(deletedFileId);
+    }
+    
+    if (filesToClose.length === 0) return {}; // No files to close
+    
+    // Filter out the files to be closed
+    const newOpenFiles = openFiles.filter(f => !filesToClose.includes(f.file_id));
+    let newActiveFileId = activeFileId;
+    
+    // If the active file is being closed, determine the next active file
+    if (filesToClose.includes(activeFileId)) {
+      if (newOpenFiles.length === 0) {
+        newActiveFileId = null; // No files left
+      } else {
+        // Find the index of the first file being closed to determine replacement
+        const firstClosedFileIndex = openFiles.findIndex(f => filesToClose.includes(f.file_id));
+        const nextIndex = Math.min(firstClosedFileIndex, newOpenFiles.length - 1);
+        newActiveFileId = newOpenFiles[nextIndex].file_id;
+      }
+    }
 
+    return { openFiles: newOpenFiles, activeFileId: newActiveFileId };
+  }),
+
+  handleFileRenamed: (fileId, newName) => set((state) => ({
+    // Update the file name in openFiles if it's there
+    openFiles: state.openFiles.map(file =>
+      file.file_id === fileId ? { ...file, name: newName } : file
+    ),
+  })),
+  
+  // --- UI State ---
   sidebarWidth: 240,
   chatPanelWidth: 300,
 
-  // --- NEW Authentication Actions ---
+  // --- Resize Actions ---
+  setSidebarWidth: (width) => set({ sidebarWidth: Math.max(150, Math.min(width, 600)) }),
+  setChatPanelWidth: (width) => set({ chatPanelWidth: Math.max(150, Math.min(width, 600)) }),
+  adjustSidebarWidth: (delta) => set((state) => ({
+    sidebarWidth: Math.max(150, Math.min(state.sidebarWidth + delta, 600))
+  })),
+  adjustChatPanelWidth: (delta) => set((state) => ({
+    chatPanelWidth: Math.max(150, Math.min(state.chatPanelWidth - delta, 600))
+  })),
+
+  // --- Authentication Actions ---
   login: (userData, token) => {
     try {
       localStorage.setItem('accessToken', token); // Store token
@@ -90,7 +233,11 @@ const useStore = create((set) => ({
 
   logout: () => {
     localStorage.removeItem('accessToken'); // Remove token
-    set({ isAuthenticated: false, token: null, user: null, error: null });
+    set({ 
+      isAuthenticated: false, token: null, user: null, error: null, 
+      projects: [], currentProject: null, projectFiles: [], 
+      openFiles: [], activeFileId: null 
+    });
   },
 
   // Action to re-check auth, useful if needed elsewhere, but initial state handles load
@@ -110,5 +257,14 @@ const useStore = create((set) => ({
   error: null, // Store potential auth errors
   setError: (errorMsg) => set({ error: errorMsg }),
 }));
+
+export const useAuth = () => useStore(state => ({
+  isAuthenticated: state.isAuthenticated,
+  accessToken: state.token,
+  user: state.user,
+  login: state.login,
+  logout: state.logout,
+  error: state.error,
+}), shallow);
 
 export default useStore;

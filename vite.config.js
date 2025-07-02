@@ -9,8 +9,15 @@ export default defineConfig({
   // base: './', // Use this if you encounter issues with file paths after building
   // Ensure server runs on a specific port
   server: {
-    port: 3000, // Or any port you prefer
-    strictPort: true, // Prevent Vite from using another port if 3000 is busy
+    port: 3001, // Or any port you prefer
+    strictPort: true, // Prevent Vite from using another port if 3001 is busy
+    proxy: {
+      // Proxy API requests to the Cloudflare Functions dev server
+      '/api': {
+        target: 'http://localhost:8788', // Default port for `wrangler dev`
+        changeOrigin: true,
+      },
+    },
   },
   // Optimize build settings for Electron later if needed
   build: {
