@@ -34,8 +34,6 @@ npm start
 npm run dev
 ```
 
-The backend expects a PostgreSQL database and reads connection details from environment variables (see `backend/dbConfig.js`).
-
 ## License
 
 This project is licensed under the MIT License.
