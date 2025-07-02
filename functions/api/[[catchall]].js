@@ -90,6 +90,7 @@ export const onRequest = async (context) => {
   const pathSegments = path.split('/').filter(Boolean);
 
   console.log(`--- Request received for: ${path} ---`);
+  console.log('Environment keys:', Object.keys(env)); // Log all available env keys
 
   // --- Simple Router ---
   if (pathSegments[0] === 'api') {
@@ -250,7 +251,7 @@ export const onRequest = async (context) => {
                 `;
                 
                 await query(deleteQuery, [id], env);
-                return json({ message: `File or folder ${id} and its contents deleted.` });
+                return json({ message: `File or folder ${id} and all its contents deleted successfully` });
             }
 
             if (request.method === 'PATCH') {
@@ -293,9 +294,12 @@ export const onRequest = async (context) => {
 
         return error(404, { message: 'Route not found.' });
 
-    } catch(err) {
-        console.error('--- [CRITICAL ERROR] ---');
-        console.error('Error on path:', path, err);
+    } catch (err) {
+        console.error('--- Unhandled Exception in API ---');
+        console.error('Path:', path);
+        console.error('Error:', err);
+        console.error('Error Message:', err.message);
+        console.error('Error Stack:', err.stack);
         return error(500, { message: 'An unexpected server error occurred.' });
     }
   }
