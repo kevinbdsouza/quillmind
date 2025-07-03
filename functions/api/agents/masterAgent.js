@@ -1,18 +1,28 @@
 import { handleStandardChat } from './standardAgent';
-import { handleRagChat } from './ragAgent'; // To be implemented
+import { handleRagChat } from './ragAgent';
 import { error, json } from '../utils';
 import axios from 'axios';
 
-const getRoutingChoice = async (text, apiKey) => {
-    const prompt = `You are a master agent responsible for routing user queries. Your job is to determine if a query is a general chat question or if it requires context from the user's project files.
+const getRoutingChoice = async (text, context, apiKey) => {
+    const contextProvided = context && context.files && context.files.length > 0;
 
-If the query is about the user's code, files, or project, you should classify it as 'rag'. Examples: "how does the auth work in this project?", "what is the purpose of the file src/components/ChatPanel.jsx", "explain this code".
+    const prompt = `You are a master routing agent. Your job is to classify a user's query into one of two categories based on the query and whether file context is provided.
 
-If the query is a general question, a greeting, or anything not specific to the project files, you should classify it as 'standard'. Examples: "hello", "what is javascript?", "write me a poem".
+Categories:
+1. 'rag': The query requires searching across the entire project's files to be answered properly. This is for questions about how different parts of the code interact, broad project-level questions, or questions about files that are NOT provided in the context.
+2. 'standard': The query is a general conversation topic OR it can be answered using ONLY the specific file context that has been provided by the user.
 
-Respond with only the single word 'rag' or 'standard'.
+**Analysis:**
+- **User Query:** "${text}"
+- **File Context Provided:** ${contextProvided ? 'Yes' : 'No'}
 
-User Query: "${text}"`;
+**Decision Logic:**
+- If the query is general (e.g., "hello", "what is react?"), choose 'standard'.
+- If File Context is 'Yes' and the query is about that context (e.g., "explain this function", "what does this code do?"), choose 'standard'.
+- If the query is about the project but requires knowledge beyond the provided context (e.g., "how does authentication work?", "where is this function used?"), choose 'rag'.
+- If File Context is 'No' and the query is about the project, choose 'rag'.
+
+Respond with only the single word: 'rag' or 'standard'.`;
 
     const model = 'gemini-1.5-flash';
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -27,7 +37,7 @@ User Query: "${text}"`;
     try {
         const geminiResponse = await axios.post(apiUrl, requestBody, { headers: { 'Content-Type': 'application/json' } });
         const choice = geminiResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text || 'standard';
-        console.log(`Routing choice for query "${text}": ${choice.trim()}`);
+        console.log(`Routing choice for query "${text}" (Context Provided: ${contextProvided}): ${choice.trim()}`);
         return choice.trim().toLowerCase();
     } catch (err) {
         console.error(`[AI ERROR] in Master Agent Routing:`, err.response?.data || err.message);
@@ -37,7 +47,7 @@ User Query: "${text}"`;
 }
 
 export const routeRequest = async (body, env, user) => {
-    const { text, action } = body;
+    const { text, action, context } = body;
     const apiKey = env.GEMINI_API_KEY;
 
     if (!apiKey) {
@@ -45,8 +55,10 @@ export const routeRequest = async (body, env, user) => {
         return error(500, { message: 'AI service configuration error.' });
     }
 
+    // Explicitly handle the summarization action
     if (action === 'summarize_for_title') {
         console.log('Routing to Standard Agent for title summarization');
+        // Use a specific prompt for summarization
         const summarizationBody = {
             ...body,
             text: `Summarize the following text into a short, concise chat title (3-5 words). Do not use quotes. Text: "${text}"`
@@ -54,7 +66,7 @@ export const routeRequest = async (body, env, user) => {
         return await handleStandardChat(summarizationBody, env, user);
     }
     
-    const choice = await getRoutingChoice(text, apiKey);
+    const choice = await getRoutingChoice(text, context, apiKey);
 
     let agentResponse;
     if (choice.includes('rag')) {
