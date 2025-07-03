@@ -37,7 +37,7 @@ User Query: "${text}"`;
 }
 
 export const routeRequest = async (body, env, user) => {
-    const { text } = body;
+    const { text, action } = body;
     const apiKey = env.GEMINI_API_KEY;
 
     if (!apiKey) {
@@ -45,6 +45,15 @@ export const routeRequest = async (body, env, user) => {
         return error(500, { message: 'AI service configuration error.' });
     }
 
+    if (action === 'summarize_for_title') {
+        console.log('Routing to Standard Agent for title summarization');
+        const summarizationBody = {
+            ...body,
+            text: `Summarize the following text into a short, concise chat title (3-5 words). Do not use quotes. Text: "${text}"`
+        };
+        return await handleStandardChat(summarizationBody, env, user);
+    }
+    
     const choice = await getRoutingChoice(text, apiKey);
 
     let agentResponse;
