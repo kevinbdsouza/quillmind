@@ -1,7 +1,6 @@
 # wrangler.toml
 name = "quillmind"
 compatibility_date = "2025-07-01"
-pages_build_output_dir = "./dist"
 
 # Enable Node.js compatibility via a compatibility flag.
 # This is crucial for making libraries like 'pg' work.
@@ -10,4 +9,11 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB" # available in your Function as env.DB
 database_name = "quillmind-db"
-database_id = "3d9c94ef-2b4a-4e20-ac7f-bb618e92a56f" 
+database_id = "3d9c94ef-2b4a-4e20-ac7f-bb618e92a56f"
+
+[[vectorize]]
+binding = "VECTORIZE_INDEX"
+index_name = "project-embeddings"
+
+[ai]
+binding = "AI" # Tells wrangler to provide the AI service on env.AI 

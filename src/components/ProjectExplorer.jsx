@@ -1,6 +1,6 @@
 // src/components/ProjectExplorer.jsx
 import React, { useMemo, useCallback, useState, useRef, useEffect } from 'react';
-import { Box, Typography, IconButton, TextField, Menu, MenuItem } from '@mui/material';
+import { Box, Typography, IconButton, TextField, Menu, MenuItem, Tooltip } from '@mui/material';
 import { SimpleTreeView } from '@mui/x-tree-view/SimpleTreeView';
 import { TreeItem, treeItemClasses } from '@mui/x-tree-view/TreeItem';
 import { styled } from '@mui/material/styles';
@@ -13,10 +13,11 @@ import FolderIcon from '@mui/icons-material/Folder';
 import ArticleIcon from '@mui/icons-material/Article';
 import AddIcon from '@mui/icons-material/Add';
 import CreateNewFolderIcon from '@mui/icons-material/CreateNewFolder';
+import SyncIcon from '@mui/icons-material/Sync';
 
 // Import the Zustand store hook and API services
 import useStore from '../store';
-import { createFile, getProjectFiles, moveFile, deleteFile, renameFile } from '../apiService';
+import { createFile, getProjectFiles, moveFile, deleteFile, renameFile, indexProject } from '../apiService';
 
 // Helper function to find a node by its ID in the tree.
 const findNodeById = (nodes, id) => {
@@ -51,8 +52,8 @@ const StyledTreeItem = styled(TreeItem)(({ theme }) => ({
       backgroundColor: 'rgba(255, 255, 255, 0.08)',
     },
     '&.Mui-selected, &.Mui-selected:hover, &.Mui-selected.Mui-focused': {
-      backgroundColor: '#E88352', // Match theme's primary color
-      color: '#FFFFFF',
+      backgroundColor: 'rgba(255, 255, 255, 0.12)', 
+      color: 'inherit',
     },
   },
   [`& .${treeItemClasses.label}`]: {
@@ -660,6 +661,20 @@ function ProjectExplorer() {
 
   }, [selectedNodeId, projectFiles, isAuthenticated, expanded]);
 
+  const handleIndexProject = async () => {
+    if (!currentProject) return;
+    try {
+      console.log(`Starting indexing for project ${currentProject.name}...`);
+      const result = await indexProject(currentProject.project_id);
+      console.log('Indexing result:', result.message);
+      // Here you would ideally show a snackbar
+      alert(`Project indexing started: ${result.message}`);
+    } catch (error) {
+      console.error('Failed to start indexing:', error);
+      alert(`Error: ${error.message}`);
+    }
+  };
+
   // Memoized tree items
   const treeItems = useMemo(() => {
     const handlers = {
@@ -763,6 +778,11 @@ function ProjectExplorer() {
           Explorer
         </Typography>
         <Box>
+          <Tooltip title="Index Project for AI Search">
+            <IconButton onClick={handleIndexProject} size="small">
+              <SyncIcon sx={{ color: 'white' }} />
+            </IconButton>
+          </Tooltip>
           <IconButton 
             size="small" 
             onClick={() => handleCreate('file')} 

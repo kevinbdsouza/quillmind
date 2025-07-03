@@ -50,6 +50,7 @@ const useStore = create((set, get) => ({
   projectFiles: [], // The file tree for the current project
   openFiles: [], // Array of currently open file objects
   activeFileId: null, // ID of the currently active file in the editor
+  suggestions: [], // Array of AI suggestions for the active file: { id, range, text }
 
   setProjects: (projects) => set({ projects }),
   setCurrentProject: (project) => {
@@ -59,6 +60,7 @@ const useStore = create((set, get) => ({
       projectFiles: [],
       openFiles: [],
       activeFileId: null,
+      suggestions: [], // Also clear suggestions on project change
     });
   },
   setProjectFiles: (files) => set({ projectFiles: files }),
@@ -71,8 +73,8 @@ const useStore = create((set, get) => ({
         openFiles: [...state.openFiles, fileToOpen],
       }));
     }
-    // Set it as active regardless
-    set({ activeFileId: fileToOpen.file_id });
+    // Set it as active regardless, and clear suggestions for the new file
+    set({ activeFileId: fileToOpen.file_id, suggestions: [] });
   },
 
   closeFile: (fileIdToClose) => set(state => {
@@ -95,10 +97,14 @@ const useStore = create((set, get) => ({
       }
     }
 
-    return { openFiles: newOpenFiles, activeFileId: newActiveFileId };
+    return { openFiles: newOpenFiles, activeFileId: newActiveFileId, suggestions: activeFileId === fileIdToClose ? [] : state.suggestions };
   }),
 
-  setActiveFileId: (fileId) => set({ activeFileId: fileId }),
+  setActiveFileId: (fileId) => set(state => ({ 
+    activeFileId: fileId,
+    // Clear suggestions when switching to a different file
+    suggestions: state.activeFileId !== fileId ? [] : state.suggestions,
+  })),
 
   // --- Action to update content (now works on a tree and openFiles) ---
   updateFileContent: (fileId, newContent) => set((state) => ({
@@ -189,7 +195,12 @@ const useStore = create((set, get) => ({
       }
     }
 
-    return { openFiles: newOpenFiles, activeFileId: newActiveFileId };
+    return { 
+      openFiles: newOpenFiles, 
+      activeFileId: newActiveFileId,
+      // Clear suggestions if the active file was closed
+      suggestions: filesToClose.includes(activeFileId) ? [] : state.suggestions
+    };
   }),
 
   handleFileRenamed: (fileId, newName) => set((state) => ({
@@ -211,6 +222,17 @@ const useStore = create((set, get) => ({
   })),
   adjustChatPanelWidth: (delta) => set((state) => ({
     chatPanelWidth: Math.max(150, Math.min(state.chatPanelWidth - delta, 600))
+  })),
+
+  // --- Suggestion Actions ---
+  addSuggestion: (sug) => set(state => {
+    const newSuggestion = { id: `sug-${Date.now()}`, ...sug };
+    console.log('Adding suggestion', newSuggestion);
+    return { suggestions: [...state.suggestions, newSuggestion] };
+  }),
+  
+  removeSuggestion: (suggestionId) => set(state => ({
+    suggestions: state.suggestions.filter(s => s.id !== suggestionId)
   })),
 
   // --- Authentication Actions ---
@@ -236,7 +258,7 @@ const useStore = create((set, get) => ({
     set({ 
       isAuthenticated: false, token: null, user: null, error: null, 
       projects: [], currentProject: null, projectFiles: [], 
-      openFiles: [], activeFileId: null 
+      openFiles: [], activeFileId: null, suggestions: [] 
     });
   },
 
@@ -248,23 +270,23 @@ const useStore = create((set, get) => ({
           get().logout();
       } else if (isAuthenticated && !get().isAuthenticated) {
           // If localStorage says logged in but state says logged out, sync state
-          const newState = getInitialAuthState();
-          set(newState);
+          const s = getInitialAuthState();
+          set({ isAuthenticated: s.isAuthenticated, token: s.token, user: s.user });
       }
   },
 
-  // --- Error State (Optional) ---
   error: null, // Store potential auth errors
   setError: (errorMsg) => set({ error: errorMsg }),
 }));
 
 export const useAuth = () => useStore(state => ({
   isAuthenticated: state.isAuthenticated,
-  accessToken: state.token,
   user: state.user,
   login: state.login,
   logout: state.logout,
+  checkAuth: state.checkAuth,
   error: state.error,
+  setError: state.setError,
 }), shallow);
 
 export default useStore;

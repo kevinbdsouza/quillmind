@@ -2,19 +2,11 @@
 import { query } from '../../api/dbConfig'; // Adjust path to dbConfig
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import axios from 'axios'; // Import axios
+import { json, error } from './utils'; // Import shared helpers
+import { routeRequest } from './agents/masterAgent'; // Import the master agent
+import { indexProjectFiles } from './services/indexingService'; // Add this import at the top
 
 // Manually create error and json response helpers to avoid itty-router
-const json = (data, options) => {
-  return new Response(JSON.stringify(data), {
-    status: options?.status || 200,
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-  });
-};
-
-const error = (status, data) => {
-  return json(data, { status });
-};
 
 // --- Authentication Middleware (as a helper function) ---
 const authenticate = (request, env) => {
@@ -83,32 +75,30 @@ const handleProjects = async (context) => {
     }
 };
 
-export const onRequest = async (context) => {
-  const { request, env } = context;
-  const url = new URL(request.url);
-  const path = url.pathname;
-  const pathSegments = path.split('/').filter(Boolean);
+// --- Main ES Module Worker ---
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+    const pathSegments = path.split('/').filter(Boolean);
 
-  console.log(`--- Request received for: ${path} ---`);
-  console.log('Environment keys:', Object.keys(env)); // Log all available env keys
+    console.log(`--- Request received for: ${path} ---`);
+    console.log('Environment keys:', Object.keys(env)); // Log all available env keys
 
-  // --- Simple Router ---
-  if (pathSegments[0] === 'api') {
+    if (pathSegments[0] !== 'api') {
+      return new Response('Not Found.', { status: 404 });
+    }
+
     const resource = pathSegments[1];
     const id = pathSegments[2];
     const subResource = pathSegments[3];
 
     // --- Authentication ---
-    // Public routes
-    if (resource === 'auth' && (id === 'login' || id === 'register')) {
-        if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
-        // Logic is handled below in the try...catch block
-    } else {
-        // Protected routes
-        const authResult = authenticate(request, env);
-        if (authResult.error) return authResult.error;
-        // Attach user to context for protected handlers to use
-        context.user = authResult.user;
+    let user; // To store authenticated user info
+    if (!(resource === 'auth' && (id === 'login' || id === 'register'))) {
+      const authResult = authenticate(request, env);
+      if (authResult.error) return authResult.error;
+      user = authResult.user; // Set the user for protected routes
     }
 
     try {
@@ -152,7 +142,7 @@ export const onRequest = async (context) => {
         }
 
         if (resource === 'projects') {
-            const userId = context.user.userId;
+            const userId = user.userId;
             
             if (request.method === 'GET' && !id) {
                 // GET /api/projects
@@ -208,13 +198,27 @@ export const onRequest = async (context) => {
                     return json({ ...result.rows[0], id: result.rows[0].file_id }, { status: 201 });
                 }
             }
+
+            if (id && subResource === 'index' && request.method === 'POST') {
+                // POST /api/projects/:projectId/index
+                const ownerResult = await query('SELECT user_id FROM projects WHERE project_id = $1', [id], env);
+                if (ownerResult.rows.length === 0) return error(404, { message: 'Project not found.' });
+                if (ownerResult.rows[0].user_id !== userId) return error(403, { message: 'Forbidden.' });
+
+                const result = await indexProjectFiles(id, env);
+                if (result.success) {
+                    return json({ message: result.message });
+                } else {
+                    return error(500, { message: result.message });
+                }
+            }
         }
 
         if (resource === 'files' && id) {
             // Routes for /api/files/:fileId
             const ownerCheck = await query('SELECT p.user_id FROM files f JOIN projects p ON f.project_id = p.project_id WHERE f.file_id = $1', [id], env);
             if (ownerCheck.rows.length === 0) return error(404, { message: 'File not found.' });
-            if (ownerCheck.rows[0].user_id !== context.user.userId) return error(403, { message: 'Forbidden.' });
+            if (ownerCheck.rows[0].user_id !== user.userId) return error(403, { message: 'Forbidden.' });
             
             if (request.method === 'GET') {
                 const result = await query('SELECT file_id, project_id, parent_id, name, type, content, created_at, updated_at FROM files WHERE file_id = $1', [id], env);
@@ -289,7 +293,7 @@ export const onRequest = async (context) => {
         
         if (resource === 'ai' && id === 'gemini-action') {
             if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
-            return handleAiAction(context);
+            return handleAiAction(request, env, user); // Pass user to AI handler
         }
 
         return error(404, { message: 'Route not found.' });
@@ -303,80 +307,16 @@ export const onRequest = async (context) => {
         return error(500, { message: 'An unexpected server error occurred.' });
     }
   }
-
-  return new Response('Not Found.', { status: 404 });
 };
 
-// --- AI Action Handler (Refactored) ---
-const handleAiAction = async (context) => {
-    const { request, env, user } = context;
-    const userId = user.userId;
-
+// --- AI Action Handler (Updated) ---
+const handleAiAction = async (request, env, user) => {
     try {
-        const { action, text, context: requestContext, history, customPrompt } = await request.json();
-
-        if (!action || !text) {
-            return error(400, { message: 'Action and text are required.' });
-        }
-
-        const apiKey = env.GEMINI_API_KEY;
-        if (!apiKey) {
-            console.error('GEMINI_API_KEY is not set in the environment variables.');
-            return error(500, { message: 'AI service configuration error.' });
-        }
-        
-        let prompt = '';
-        switch (action.toLowerCase()) {
-            case 'summarize':
-              prompt = `Summarize the following text:\n---\n${text}\n---\nSummary:`;
-              break;
-            case 'rewrite':
-              prompt = `Rewrite the following text in a clear and concise way:\n---\n${text}\n---\nRewritten Text:`;
-              break;
-            case 'make shorter':
-              prompt = `Make the following text shorter while preserving the main points:\n---\n${text}\n---\nShorter Text:`;
-              break;
-            case 'make longer':
-              prompt = `Expand on the following text, adding relevant details or explanation:\n---\n${text}\n---\nExpanded Text:`;
-              break;
-            case 'chat':
-                let historyText = '';
-                if (history && history.length > 0) {
-                    historyText = 'Here is the conversation history:\n---\n' + history.map(msg => `${msg.author}: ${msg.text}`).join('\n') + '\n---\n\n';
-                }
-
-                if (requestContext?.fileContent) {
-                    prompt = `Given the following file content from "${requestContext.fileName}":\n\n---\n${requestContext.fileContent}\n---\n\n${historyText}Now, answer the user's question:\nUser: ${text}\n---\nAI:`;
-                } else {
-                    prompt = `${historyText}The user is asking a question in a chat. Provide a helpful response.\n---\nUser: ${text}\n---\nAI:`;
-                }
-                break;
-            case 'custom':
-                if (!customPrompt) {
-                    return error(400, { message: 'A custom prompt is required for this action.' });
-                }
-                prompt = `Instruction: "${customPrompt}"\n\nProcess the following text based on the instruction:\n---\n${text}\n---\nResult:`;
-                break;
-            default:
-                 return error(400, { message: `Unsupported AI action: ${action}` });
-        }
-
-        const model = 'gemini-pro';
-
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-
-        const requestBody = {
-            contents: [{ parts: [{ text: prompt }] }],
-        };
-
-        const geminiResponse = await axios.post(apiUrl, requestBody, { headers: { 'Content-Type': 'application/json' } });
-
-        let generatedText = geminiResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        
-        return json({ result: generatedText.trim() });
-
+        const body = await request.json();
+        // Pass the full context (request body + env + user) to the master agent
+        return routeRequest(body, env, user);
     } catch (err) {
-        console.error(`[AI ERROR] for user ${userId}:`, err.response?.data || err.message);
+        console.error(`[AI ERROR] for user ${user?.userId}:`, err.response?.data || err.message);
         const errorMessage = err.response?.data?.error?.message || 'AI request failed.';
         return error(err.response?.status || 500, { message: `AI service error: ${errorMessage}` });
     }

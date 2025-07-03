@@ -5,10 +5,11 @@
     "author": "Kevin Dsouza",
     "license": "MIT",
     "scripts": {
-        "dev": "vite",
+        "dev": "concurrently -n backend,frontend -c green,blue \"npm:dev:backend\" \"npm:dev:frontend\"",
+        "dev:frontend": "vite",
+        "dev:backend": "wrangler dev functions/api/[[catchall]].js --port 8788",
         "build": "vite build",
         "preview": "vite preview",
-        "pages:dev": "wrangler pages dev -- npm run dev",
         "pages:deploy": "npm run build && wrangler pages deploy ./dist",
         "apply-schema": "node scripts/apply-schema.js"
     },
@@ -33,6 +34,7 @@
     },
     "devDependencies": {
         "@vitejs/plugin-react": "^4.3.1",
+        "concurrently": "^8.2.2",
         "vite": "^5.3.3",
         "wrangler": "^4.0.0"
     }

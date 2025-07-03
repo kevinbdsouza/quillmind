@@ -208,5 +208,18 @@ export const renameFile = async (fileId, name) => {
     }
 };
 
+/**
+ * Triggers the indexing of a project's files.
+ * @param {number} projectId - The ID of the project to index.
+ * @returns {Promise<object>} - Confirmation message.
+ */
+export const indexProject = async (projectId) => {
+    try {
+        const response = await apiService.post(`/projects/${projectId}/index`);
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { message: 'Failed to start project indexing' };
+    }
+};
 
 export default apiService; // Export configured instance

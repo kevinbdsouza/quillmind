@@ -1,16 +1,28 @@
 // src/components/EditorArea.jsx
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { createRoot } from 'react-dom/client';
 import { Box, Paper, IconButton, Divider, Tooltip, CircularProgress, Dialog, DialogTitle, DialogContent, TextField, DialogActions, Button, Typography, Tabs, Tab } from '@mui/material';
 import { 
   FormatBold, FormatItalic, FormatUnderlined, 
   FormatListBulleted, FormatListNumbered, Code, 
   FormatQuote, Redo, Undo, AddComment,
-  Close as CloseIcon
+  Close as CloseIcon, Check as CheckIcon,
 } from '@mui/icons-material';
-import Editor, { loader } from '@monaco-editor/react';
+import Editor, { loader, useMonaco } from '@monaco-editor/react';
 import apiService from '../apiService';
 import useStore from '../store';
 import { updateFile } from '../apiService'; // Import updateFile
+
+const suggestionHighlightStyle = `
+  .suggestion-original {
+    background-color: rgba(205, 92, 92, 0.25); /* dull red for original */
+    border-radius: 2px;
+  }
+  .suggestion-new {
+    background-color: rgba(210, 105, 30, 0.3); /* dull orange for suggestion text */
+    border-radius: 2px;
+  }
+`;
 
 // Simple debounce function
 function debounce(func, wait) {
@@ -108,20 +120,59 @@ const EditorToolbar = ({ onAction, onAiAction, isTextSelected, isAiLoading }) =>
   );
 };
 
+const SuggestionWidget = ({ onAccept, onReject }) => (
+  <Box
+    className="suggestion-widget"
+    sx={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 0.25,
+      p: 0.25,
+      bgcolor: 'background.paper',
+      borderRadius: 1,
+      boxShadow: 2,
+      pointerEvents: 'auto',
+    }}
+  >
+    <Tooltip title="Accept">
+      <IconButton size="small" onClick={onAccept} color="success">
+        <CheckIcon fontSize="inherit" />
+      </IconButton>
+    </Tooltip>
+    <Tooltip title="Reject">
+      <IconButton size="small" onClick={onReject} color="error">
+        <CloseIcon fontSize="inherit" />
+      </IconButton>
+    </Tooltip>
+  </Box>
+);
+
+// add helper function after imports
+const rangeToPlain = (r) => ({
+  startLineNumber: r.startLineNumber,
+  startColumn: r.startColumn,
+  endLineNumber: r.endLineNumber,
+  endColumn: r.endColumn,
+});
+const plainToRange = (pl, monaco)=> new monaco.Range(pl.startLineNumber, pl.startColumn, pl.endLineNumber, pl.endColumn);
+
 function EditorArea() {
   const editorRef = useRef(null);
+  const monaco = useMonaco();
   const { 
     openFiles, 
     activeFileId, 
     closeFile, 
     setActiveFileId, 
-    updateFileContent 
+    updateFileContent,
+    suggestions,
   } = useStore((state) => ({
     openFiles: state.openFiles,
     activeFileId: state.activeFileId,
     closeFile: state.closeFile,
     setActiveFileId: state.setActiveFileId,
     updateFileContent: state.updateFileContent,
+    suggestions: state.suggestions,
   }));
 
   const activeFile = useMemo(() => {
@@ -133,8 +184,10 @@ function EditorArea() {
   const [isTextSelected, setIsTextSelected] = useState(false);
   const [isCustomPromptOpen, setIsCustomPromptOpen] = useState(false);
   const [customPrompt, setCustomPrompt] = useState('');
-  const monacoRef = useRef(null);
   const customPromptInputRef = useRef(null);
+  const [decorations, setDecorations] = useState([]);
+  const contentWidgets = useRef({});
+  const rootNodes = useRef({});
   
   // --- Auto-saving logic ---
   const [isSaving, setIsSaving] = useState(false);
@@ -155,6 +208,178 @@ function EditorArea() {
     []
   );
 
+  // Define handlers before they're used in useEffect dependencies
+  const handleAcceptSuggestion = useCallback((suggestion) => {
+    console.log('Accept suggestion called:', suggestion);
+    if (!editorRef.current || !monaco) {
+      console.log('Missing editor or monaco:', { editor: !!editorRef.current, monaco: !!monaco });
+      return;
+    }
+    
+    try {
+      const currentSuggestions = useStore.getState().suggestions;
+      const stillExists = currentSuggestions.find(s => s.id === suggestion.id);
+      if (!stillExists) return;
+
+      // Create a single range that covers both the original text and the temporary suggestion
+      const totalRange = new monaco.Range(
+        suggestion.originalRange.startLineNumber,
+        suggestion.originalRange.startColumn,
+        suggestion.deleteRange.endLineNumber,
+        suggestion.deleteRange.endColumn
+      );
+
+      // Replace the entire area with the final suggested text
+      editorRef.current.executeEdits('accept-suggestion', [
+        { range: totalRange, text: suggestion.text, forceMoveMarkers: true }
+      ]);
+      
+      useStore.getState().removeSuggestion(suggestion.id);
+      console.log('Suggestion accepted and removed');
+      
+    } catch (error) {
+      console.warn('Error accepting suggestion:', error);
+      useStore.getState().removeSuggestion(suggestion.id);
+    }
+  }, [monaco]);
+
+  const handleRejectSuggestion = useCallback((suggestionId) => {
+    console.log('Reject suggestion called:', suggestionId);
+    try {
+      const s = useStore.getState().suggestions.find(x=>x.id===suggestionId);
+      if(s){
+        const delRange = plainToRange(s.deleteRange, monaco);
+        editorRef.current.executeEdits('reject-suggestion', [{range: delRange, text:'', forceMoveMarkers:true}]);
+      }
+      useStore.getState().removeSuggestion(suggestionId);
+      console.log('Suggestion rejected and removed');
+    } catch (error) {
+      console.warn('Error rejecting suggestion:', error);
+    }
+  }, [monaco]);
+
+  const [editorReady, setEditorReady] = useState(false);
+
+  useEffect(() => {
+    console.log('useEffect triggered: suggestions', suggestions.length, 'monaco ready', !!monaco);
+    // When suggestions change, update the editor decorations
+    if (editorRef.current && monaco && monaco.editor) {
+      console.log('Rendering suggestions effect. Count:', suggestions.length);
+      const newDecorations = suggestions.flatMap(suggestion => ([
+        {
+          range: new monaco.Range(
+            suggestion.originalRange.startLineNumber,
+            suggestion.originalRange.startColumn,
+            suggestion.originalRange.endLineNumber,
+            suggestion.originalRange.endColumn
+          ),
+          options: {
+            className: 'suggestion-original',
+            inlineClassName: 'suggestion-original',
+          }
+        },
+        {
+          range: new monaco.Range(
+            suggestion.suggestionRange.startLineNumber,
+            suggestion.suggestionRange.startColumn,
+            suggestion.suggestionRange.endLineNumber,
+            suggestion.suggestionRange.endColumn
+          ),
+          options: {
+            className: 'suggestion-new',
+            inlineClassName: 'suggestion-new',
+          }
+        }
+      ]));
+      const resultingDecorations = editorRef.current.deltaDecorations(decorations, newDecorations);
+      console.log('Applied decorations', resultingDecorations);
+      setDecorations(resultingDecorations);
+
+      // --- Manage Content Widgets ---
+      const newWidgetIds = new Set(suggestions.map(s => s.id));
+      const oldWidgetIds = new Set(Object.keys(contentWidgets.current));
+
+      // Remove old widgets that are no longer needed
+      oldWidgetIds.forEach(id => {
+        if (!newWidgetIds.has(id)) {
+          try {
+            editorRef.current.removeContentWidget(contentWidgets.current[id]);
+            delete contentWidgets.current[id];
+            if (rootNodes.current[id]) {
+              const root = rootNodes.current[id];
+              // defer unmount to avoid React warning during render
+              Promise.resolve().then(() => root.unmount());
+              delete rootNodes.current[id];
+            }
+          } catch (error) {
+            console.warn('Error removing content widget:', error);
+          }
+        }
+      });
+      
+      // Add new widgets
+      suggestions.forEach(suggestion => {
+        console.log('Processing widget for', suggestion.id);
+        if (!contentWidgets.current[suggestion.id]) {
+          try {
+            const widgetNode = document.createElement('span');
+            widgetNode.style.pointerEvents = 'auto'; // make entire widget clickable
+            widgetNode.className = 'suggestion-widget-root';
+            const root = createRoot(widgetNode);
+            
+            root.render(
+              <SuggestionWidget 
+                onAccept={() => handleAcceptSuggestion(suggestion)} 
+                onReject={() => handleRejectSuggestion(suggestion.id)} 
+              />
+            );
+            
+            const widget = {
+              getId: () => `suggestion.widget.${suggestion.id}`,
+              getDomNode: () => widgetNode,
+              getPosition: () => ({
+                position: {
+                  lineNumber: suggestion.suggestionRange.endLineNumber,
+                  column: suggestion.suggestionRange.endColumn
+                },
+                preference: [monaco.editor.ContentWidgetPositionPreference.EXACT]
+              })
+            };
+
+            editorRef.current.addContentWidget(widget);
+            contentWidgets.current[suggestion.id] = widget;
+            rootNodes.current[suggestion.id] = root;
+          } catch (error) {
+            console.warn('Error adding content widget:', error);
+          }
+        }
+      });
+    }
+  }, [suggestions, monaco, editorReady, handleAcceptSuggestion, handleRejectSuggestion]);
+
+  // Cleanup effect to remove all widgets when component unmounts
+  useEffect(() => {
+    return () => {
+      // Cleanup all content widgets
+      Object.keys(contentWidgets.current).forEach(id => {
+        try {
+          if (editorRef.current) {
+            editorRef.current.removeContentWidget(contentWidgets.current[id]);
+          }
+          if (rootNodes.current[id]) {
+            const root = rootNodes.current[id];
+            // defer unmount to avoid React warning during render
+            Promise.resolve().then(() => root.unmount());
+          }
+        } catch (error) {
+          console.warn('Error during cleanup:', error);
+        }
+      });
+      contentWidgets.current = {};
+      rootNodes.current = {};
+    };
+  }, []);
+
   useEffect(() => {
     // When the active file changes, update the editor's content
     if (editorRef.current && activeFile) {
@@ -174,9 +399,9 @@ function EditorArea() {
   };
   // --- End of Auto-saving ---
 
-  const handleEditorDidMount = (editor, monaco) => {
+  const handleEditorDidMount = (editor) => {
     editorRef.current = editor;
-    monacoRef.current = monaco;
+    setEditorReady(true);
 
     editor.onMouseUp(() => {
       setTimeout(() => {
@@ -204,7 +429,8 @@ function EditorArea() {
     }
 
     const selection = selectionRef.current;
-    if (!selection || !editorRef.current) return;
+    const fileIdAtActionStart = activeFileId; // Capture file ID
+    if (!selection || !editorRef.current || !fileIdAtActionStart) return;
     
     const selectedText = editorRef.current.getModel().getValueInRange(selection);
     setIsAiLoading(true);
@@ -213,14 +439,31 @@ function EditorArea() {
         const response = await apiService.post('/ai/gemini-action', { action, text: selectedText });
         const newText = response.data.result;
 
-        editorRef.current.executeEdits('ai-replace', [
-            { range: selection, text: newText }
-        ]);
+        // Check if context is still valid before adding suggestion
+        if (useStore.getState().activeFileId === fileIdAtActionStart) {
+            const origRangeObj = rangeToPlain(selection);
+            const origEnd = selection.getEndPosition();
+            const insertText = '\n' + newText;
+            editorRef.current.executeEdits('insert-suggestion', [
+              { range: new monaco.Range(origEnd.lineNumber, origEnd.column, origEnd.lineNumber, origEnd.column), text: insertText }
+            ]);
+            const lines = newText.split('\n');
+            const suggStartLine = origEnd.lineNumber + 1;
+            const suggStartCol = 1;
+            const suggEndLine = origEnd.lineNumber + lines.length;
+            const suggEndCol = lines[lines.length -1].length +1;
+            const suggRangeObj = { startLineNumber: suggStartLine, startColumn: suggStartCol, endLineNumber: suggEndLine, endColumn: suggEndCol };
+            const delRangeObj = { startLineNumber: origEnd.lineNumber, startColumn: origEnd.column, endLineNumber: suggEndLine, endColumn: suggEndCol };
+            useStore.getState().addSuggestion({ originalRange: origRangeObj, suggestionRange: suggRangeObj, deleteRange: delRangeObj, text: newText });
+        }
+
         selectionRef.current = null;
         setIsTextSelected(false);
+        setCustomPrompt(''); // Clear the prompt
 
     } catch (error) {
         console.error("AI Action Error:", error);
+        // Don't rethrow - let the error be handled here
     } finally {
         setIsAiLoading(false);
     }
@@ -234,7 +477,8 @@ function EditorArea() {
 
   const handleCustomPromptSubmit = async () => {
     const selection = selectionRef.current;
-    if (!selection || !editorRef.current || !customPrompt.trim()) return;
+    const fileIdAtActionStart = activeFileId; // Capture file ID
+    if (!selection || !editorRef.current || !customPrompt.trim() || !fileIdAtActionStart) return;
 
     const selectedText = editorRef.current.getModel().getValueInRange(selection);
     setIsAiLoading(true);
@@ -244,20 +488,41 @@ function EditorArea() {
         const response = await apiService.post('/ai/gemini-action', {
             action: 'custom',
             text: selectedText,
-            customPrompt: customPrompt
+            customPrompt: customPrompt,
+            context: {
+                fileName: activeFile.name,
+                fileContent: activeFile.content
+            }
         });
         const newText = response.data.result;
 
-        editorRef.current.executeEdits('ai-replace', [
-            { range: selection, text: newText }
-        ]);
+        // Check if context is still valid before adding suggestion
+        if (useStore.getState().activeFileId === fileIdAtActionStart) {
+            const origRangeObj = rangeToPlain(selection);
+            const origEnd = selection.getEndPosition();
+            const insertText = '\n' + newText;
+            editorRef.current.executeEdits('insert-suggestion', [
+              { range: new monaco.Range(origEnd.lineNumber, origEnd.column, origEnd.lineNumber, origEnd.column), text: insertText }
+            ]);
+            const lines = newText.split('\n');
+            const suggStartLine = origEnd.lineNumber + 1;
+            const suggStartCol = 1;
+            const suggEndLine = origEnd.lineNumber + lines.length;
+            const suggEndCol = lines[lines.length -1].length +1;
+            const suggRangeObj = { startLineNumber: suggStartLine, startColumn: suggStartCol, endLineNumber: suggEndLine, endColumn: suggEndCol };
+            const delRangeObj = { startLineNumber: origEnd.lineNumber, startColumn: origEnd.column, endLineNumber: suggEndLine, endColumn: suggEndCol };
+            useStore.getState().addSuggestion({ originalRange: origRangeObj, suggestionRange: suggRangeObj, deleteRange: delRangeObj, text: newText });
+        }
+
         selectionRef.current = null;
         setIsTextSelected(false);
+        setCustomPrompt(''); // Clear the prompt
+
     } catch (error) {
-        console.error("Custom AI Action Error:", error);
+        console.error("AI Action Error:", error);
+        // Don't rethrow - let the error be handled here
     } finally {
         setIsAiLoading(false);
-        setCustomPrompt('');
     }
   };
 
@@ -275,10 +540,9 @@ function EditorArea() {
   };
 
   const handleToolbarAction = (action) => {
-    if (!editorRef.current || !monacoRef.current) return;
+    if (!editorRef.current || !monaco) return;
 
     const editor = editorRef.current;
-    const monaco = monacoRef.current;
     const model = editor.getModel();
 
     if (!model) return;
@@ -401,6 +665,7 @@ function EditorArea() {
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', bgcolor: 'background.default' }}>
+      <style>{suggestionHighlightStyle}</style>
       <Paper elevation={0} sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Tabs
           value={activeFileId}

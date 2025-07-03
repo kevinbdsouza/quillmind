@@ -1,6 +1,6 @@
 // src/components/ChatPanel.js
 import React, { useState, useRef, useEffect } from 'react';
-import { Box, Paper, Avatar, IconButton, Snackbar, Alert, Divider, Tooltip } from '@mui/material';
+import { Box, Paper, Avatar, IconButton, Snackbar, Alert, Divider, Tooltip, Select, MenuItem, Chip, OutlinedInput } from '@mui/material';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
@@ -14,12 +14,30 @@ import apiService from '../apiService'; // Assuming a centralized apiService
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import PersonIcon from '@mui/icons-material/Person';
 
+// Helper to flatten the file tree for the select dropdown
+const flattenFiles = (tree) => {
+  let files = [];
+  const recurse = (nodes, path) => {
+    nodes.forEach(node => {
+      const newPath = path ? `${path}/${node.name}` : node.name;
+      if (node.type === 'file') {
+        files.push({ ...node, path: newPath });
+      }
+      if (node.children) {
+        recurse(node.children, newPath);
+      }
+    });
+  };
+  recurse(tree, '');
+  return files;
+};
+
 function ChatPanel() {
   const [message, setMessage] = useState('');
   const [chats, setChats] = useState([
     {
       id: 1,
-      title: 'Chat 1',
+      title: 'Chat',
       history: [{ author: 'AI', text: 'How can I help you today?' }],
       createdAt: new Date()
     }
@@ -28,13 +46,29 @@ function ChatPanel() {
   const [isLoading, setIsLoading] = useState(false);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
+  const [contextFileIds, setContextFileIds] = useState([]);
+  const activeChat = chats.find(chat => chat.id === activeChatId);
+  const [displayTitle, setDisplayTitle] = useState(activeChat ? activeChat.title : 'Chat');
   const chatBoxRef = useRef(null);
-  const { accessToken, activeFile } = useStore((state) => ({
+  const { accessToken, activeFile, projectFiles, currentProject } = useStore((state) => ({
     accessToken: state.token,
-    activeFile: state.openFiles.find(file => file.file_id === state.activeFileId)
+    activeFile: state.openFiles.find(file => file.file_id === state.activeFileId),
+    projectFiles: state.projectFiles,
+    currentProject: state.currentProject,
   }));
 
-  const activeChat = chats.find(chat => chat.id === activeChatId);
+  const flatFiles = React.useMemo(() => flattenFiles(projectFiles), [projectFiles]);
+  const contextFiles = React.useMemo(() => flatFiles.filter(f => contextFileIds.includes(f.file_id)), [flatFiles, contextFileIds]);
+
+  // When the active file changes, automatically set it as the context
+  useEffect(() => {
+    if (activeFile) {
+      setContextFileIds([activeFile.file_id]);
+    } else {
+      setContextFileIds([]); // Clear context if no file is active
+    }
+  }, [activeFile]);
+
   const recentChats = chats.slice(-3).reverse(); // Last 3 chats, most recent first
 
   // Auto-scroll to bottom of chat
@@ -64,17 +98,20 @@ function ChatPanel() {
     const newChatId = Math.max(...chats.map(c => c.id)) + 1;
     const newChat = {
       id: newChatId,
-      title: `Chat ${newChatId}`,
+      title: `Chat`, // Set a generic title initially
       history: [{ author: 'AI', text: 'How can I help you today?' }],
       createdAt: new Date()
     };
     
     setChats(prevChats => [...prevChats, newChat]);
     setActiveChatId(newChatId);
+    setDisplayTitle('Chat');
   };
 
   const switchToChat = (chatId) => {
     setActiveChatId(chatId);
+    const newTitle = chats.find(c => c.id === chatId)?.title || 'Chat';
+    setDisplayTitle(newTitle);
   };
 
   const updateChatTitle = (chatId, newTitle) => {
@@ -85,40 +122,46 @@ function ChatPanel() {
     );
   };
 
-  const generateChatTitle = (firstMessage) => {
-    // Generate a title from the first user message, limited to 30 characters
-    if (firstMessage.length > 30) {
-      return firstMessage.substring(0, 27) + '...';
-    }
-    return firstMessage;
-  };
-
   const handleSend = async () => {
     if (!message.trim() || isLoading || !activeChat) return;
 
     const newHistory = [...activeChat.history, { author: 'User', text: message }];
-    
-    // Update the chat history
+    const isFirstUserMessage = activeChat.history.length === 1 && activeChat.history[0].author === 'AI';
+
+    // Update the chat history immediately for a responsive UI
     setChats(prevChats =>
       prevChats.map(chat =>
         chat.id === activeChatId ? { ...chat, history: newHistory } : chat
       )
     );
 
-    // If this is the first user message, update the chat title
-    if (activeChat.history.length === 1 && activeChat.history[0].author === 'AI') {
-      updateChatTitle(activeChatId, generateChatTitle(message));
-    }
-
+    const userMessage = message; // Capture message before clearing it
     setMessage('');
     setIsLoading(true);
 
     try {
-      // Prepare payload
+      // If this is the first user message, generate and update the chat title
+      if (isFirstUserMessage) {
+        try {
+          const titleResponse = await apiService.post('/ai/gemini-action', {
+            action: 'summarize_for_title',
+            text: userMessage,
+          });
+          const newTitle = titleResponse.data.result.replace(/["']/g, ''); // Clean quotes
+          updateChatTitle(activeChatId, newTitle);
+        } catch (titleError) {
+          console.error('Failed to generate chat title:', titleError);
+          // Fallback to a simple title if generation fails
+          updateChatTitle(activeChatId, 'Chat');
+        }
+      }
+      
+      // Prepare payload for the main chat response
       const payload = {
         action: 'chat',
-        text: message,
-        history: activeChat.history, // Pass the previous chat history
+        text: userMessage,
+        history: activeChat.history,
+        projectId: currentProject ? currentProject.project_id : null,
       };
 
       // If there's a file open, add it to the context
@@ -126,6 +169,16 @@ function ChatPanel() {
         payload.context = {
           fileName: activeFile.name,
           fileContent: activeFile.content,
+        };
+      }
+
+      // If there are context files, add them to the payload
+      if (contextFiles.length > 0) {
+        payload.context = {
+          files: contextFiles.map(file => ({
+            fileName: file.path,
+            fileContent: file.content,
+          })),
         };
       }
 
@@ -185,7 +238,7 @@ function ChatPanel() {
         mb: 2 
       }}>
         <Typography variant="h6">
-          {activeChat.title}
+          {displayTitle}
         </Typography>
         <Tooltip title="New Chat">
           <IconButton onClick={createNewChat} size="small" sx={{ color: 'primary.main' }}>
@@ -194,21 +247,49 @@ function ChatPanel() {
         </Tooltip>
       </Box>
 
-      {/* Active file context indicator */}
-      {activeFile && (
-        <Box sx={{ 
-          mb: 2, 
-          p: 1, 
-          bgcolor: 'primary.main', 
-          color: 'primary.contrastText', 
-          borderRadius: 1,
-          fontSize: '0.75rem'
-        }}>
-          <Typography variant="caption" sx={{ fontWeight: 'bold' }}>
-            📄 Context: {activeFile.name}
-          </Typography>
-        </Box>
-      )}
+      {/* Context file multi-selector */}
+      <Box sx={{ mb: 2 }}>
+        <Typography variant="caption" sx={{ color: 'text.secondary', mb: 0.5, display: 'block' }}>
+          📄 Context Files
+        </Typography>
+        <Select
+          multiple
+          value={contextFileIds}
+          onChange={(e) => setContextFileIds(e.target.value)}
+          input={<OutlinedInput sx={{
+            '& .MuiOutlinedInput-notchedOutline': {
+              borderColor: 'rgba(255, 255, 255, 0.23)',
+            },
+            '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
+              borderColor: 'rgba(255, 255, 255, 0.23)',
+              borderWidth: '1px'
+            },
+          }}/>}
+          renderValue={(selected) => (
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+              {selected.map((id) => {
+                const file = flatFiles.find(f => f.file_id === id);
+                return <Chip key={id} label={file?.name || id} size="small" />;
+              })}
+            </Box>
+          )}
+          fullWidth
+          size="small"
+          MenuProps={{
+            PaperProps: {
+              style: {
+                maxHeight: 250,
+              },
+            },
+          }}
+        >
+          {flatFiles.map((file) => (
+            <MenuItem key={file.file_id} value={file.file_id}>
+              {file.path}
+            </MenuItem>
+          ))}
+        </Select>
+      </Box>
 
       {/* Chat messages area */}
       <Box 
@@ -403,14 +484,14 @@ function ChatPanel() {
                   p: 1,
                   mb: 0.5,
                   cursor: 'pointer',
-                  bgcolor: chat.id === activeChatId ? 'primary.main' : 'background.paper',
-                  color: chat.id === activeChatId ? 'primary.contrastText' : 'text.primary',
+                  bgcolor: chat.id === activeChatId ? 'rgba(255, 255, 255, 0.12)' : 'background.paper',
+                  color: chat.id === activeChatId ? 'text.primary' : 'text.primary',
                   border: chat.id === activeChatId ? 'none' : '1px solid',
                   borderColor: 'divider',
                   borderRadius: 1,
                   transition: 'all 0.2s',
                   '&:hover': {
-                    bgcolor: chat.id === activeChatId ? 'primary.dark' : 'action.hover',
+                    bgcolor: chat.id === activeChatId ? 'rgba(255, 255, 255, 0.16)' : 'action.hover',
                   }
                 }}
               >
@@ -432,7 +513,7 @@ function ChatPanel() {
                   <Typography 
                     variant="caption" 
                     sx={{ 
-                      color: chat.id === activeChatId ? 'primary.contrastText' : 'text.secondary',
+                      color: chat.id === activeChatId ? 'text.secondary' : 'text.secondary',
                       flexShrink: 0,
                       ml: 1
                     }}
