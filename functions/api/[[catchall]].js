@@ -291,7 +291,7 @@ export const onRequest = async (context) => {
       }
     }
     
-    if (resource === 'ai' && id === 'action') {
+    if (resource === 'ai' && id === 'gemini-action') {
       const authResult = authenticate(request, env);
       if (authResult.error) return authResult.error;
       const user = authResult.user;
