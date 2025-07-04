@@ -125,6 +125,12 @@ function ChatPanel() {
   const handleSend = async () => {
     if (!message.trim() || isLoading || !activeChat) return;
 
+    // Guard: Don't send requests if there's no current project
+    if (!currentProject || !currentProject.project_id) {
+      console.warn('Cannot send chat message: No current project selected');
+      return;
+    }
+
     const newHistory = [...activeChat.history, { author: 'User', text: message }];
     const isFirstUserMessage = activeChat.history.length === 1 && activeChat.history[0].author === 'AI';
 
@@ -146,6 +152,7 @@ function ChatPanel() {
           const titleResponse = await apiService.post('/ai/gemini-action', {
             action: 'summarize_for_title',
             text: userMessage,
+            projectId: currentProject ? currentProject.project_id : null,
           });
           const newTitle = titleResponse.data.result.replace(/["']/g, ''); // Clean quotes
           updateChatTitle(activeChatId, newTitle);

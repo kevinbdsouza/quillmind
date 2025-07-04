@@ -50,7 +50,7 @@ const useStore = create((set, get) => ({
   projectFiles: [], // The file tree for the current project
   openFiles: [], // Array of currently open file objects
   activeFileId: null, // ID of the currently active file in the editor
-  suggestions: [], // Array of AI suggestions for the active file: { id, range, text }
+  suggestionsByFile: {}, // Object mapping fileId to an array of suggestions
 
   setProjects: (projects) => set({ projects }),
   setCurrentProject: (project) => {
@@ -60,7 +60,7 @@ const useStore = create((set, get) => ({
       projectFiles: [],
       openFiles: [],
       activeFileId: null,
-      suggestions: [], // Also clear suggestions on project change
+      suggestionsByFile: {}, // Also clear suggestions on project change
     });
   },
   setProjectFiles: (files) => set({ projectFiles: files }),
@@ -73,12 +73,12 @@ const useStore = create((set, get) => ({
         openFiles: [...state.openFiles, fileToOpen],
       }));
     }
-    // Set it as active regardless, and clear suggestions for the new file
-    set({ activeFileId: fileToOpen.file_id, suggestions: [] });
+    // Set it as active regardless
+    set({ activeFileId: fileToOpen.file_id });
   },
 
   closeFile: (fileIdToClose) => set(state => {
-    const { openFiles, activeFileId } = state;
+    const { openFiles, activeFileId, suggestionsByFile } = state;
     const fileIndex = openFiles.findIndex(f => f.file_id === fileIdToClose);
 
     if (fileIndex === -1) return {}; // File not found
@@ -96,15 +96,18 @@ const useStore = create((set, get) => ({
         newActiveFileId = newOpenFiles[nextIndex].file_id;
       }
     }
+    
+    // Remove suggestions for the closed file
+    const { [fileIdToClose]: _, ...remainingSuggestions } = suggestionsByFile;
 
-    return { openFiles: newOpenFiles, activeFileId: newActiveFileId, suggestions: activeFileId === fileIdToClose ? [] : state.suggestions };
+    return { 
+      openFiles: newOpenFiles, 
+      activeFileId: newActiveFileId, 
+      suggestionsByFile: remainingSuggestions 
+    };
   }),
 
-  setActiveFileId: (fileId) => set(state => ({ 
-    activeFileId: fileId,
-    // Clear suggestions when switching to a different file
-    suggestions: state.activeFileId !== fileId ? [] : state.suggestions,
-  })),
+  setActiveFileId: (fileId) => set({ activeFileId: fileId }),
 
   // --- Action to update content (now works on a tree and openFiles) ---
   updateFileContent: (fileId, newContent) => set((state) => ({
@@ -195,11 +198,14 @@ const useStore = create((set, get) => ({
       }
     }
 
+    // Remove suggestions for all closed files
+    const newSuggestionsByFile = { ...state.suggestionsByFile };
+    filesToClose.forEach(id => delete newSuggestionsByFile[id]);
+
     return { 
       openFiles: newOpenFiles, 
       activeFileId: newActiveFileId,
-      // Clear suggestions if the active file was closed
-      suggestions: filesToClose.includes(activeFileId) ? [] : state.suggestions
+      suggestionsByFile: newSuggestionsByFile
     };
   }),
 
@@ -225,15 +231,34 @@ const useStore = create((set, get) => ({
   })),
 
   // --- Suggestion Actions ---
-  addSuggestion: (sug) => set(state => {
+  addSuggestion: (fileId, sug) => set(state => {
     const newSuggestion = { id: `sug-${Date.now()}`, ...sug };
-    console.log('Adding suggestion', newSuggestion);
-    return { suggestions: [...state.suggestions, newSuggestion] };
+    const fileSuggestions = state.suggestionsByFile[fileId] || [];
+    return {
+      suggestionsByFile: {
+        ...state.suggestionsByFile,
+        [fileId]: [...fileSuggestions, newSuggestion]
+      }
+    };
   }),
   
-  removeSuggestion: (suggestionId) => set(state => ({
-    suggestions: state.suggestions.filter(s => s.id !== suggestionId)
-  })),
+  removeSuggestion: (fileId, suggestionId) => set(state => {
+    const fileSuggestions = state.suggestionsByFile[fileId] || [];
+    const newFileSuggestions = fileSuggestions.filter(s => s.id !== suggestionId);
+    
+    if (newFileSuggestions.length > 0) {
+      return {
+        suggestionsByFile: {
+          ...state.suggestionsByFile,
+          [fileId]: newFileSuggestions
+        }
+      };
+    } else {
+      // Remove the fileId key if no suggestions are left
+      const { [fileId]: _, ...rest } = state.suggestionsByFile;
+      return { suggestionsByFile: rest };
+    }
+  }),
 
   // --- Authentication Actions ---
   login: (userData, token) => {
@@ -258,7 +283,7 @@ const useStore = create((set, get) => ({
     set({ 
       isAuthenticated: false, token: null, user: null, error: null, 
       projects: [], currentProject: null, projectFiles: [], 
-      openFiles: [], activeFileId: null, suggestions: [] 
+      openFiles: [], activeFileId: null, suggestionsByFile: {} 
     });
   },
 

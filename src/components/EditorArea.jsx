@@ -165,19 +165,25 @@ function EditorArea() {
     closeFile, 
     setActiveFileId, 
     updateFileContent,
-    suggestions,
+    suggestionsByFile,
+    currentProject,
   } = useStore((state) => ({
     openFiles: state.openFiles,
     activeFileId: state.activeFileId,
     closeFile: state.closeFile,
     setActiveFileId: state.setActiveFileId,
     updateFileContent: state.updateFileContent,
-    suggestions: state.suggestions,
+    suggestionsByFile: state.suggestionsByFile,
+    currentProject: state.currentProject,
   }));
 
   const activeFile = useMemo(() => {
     return openFiles.find(file => file.file_id === activeFileId);
   }, [openFiles, activeFileId]);
+  
+  const suggestions = useMemo(() => {
+    return suggestionsByFile[activeFileId] || [];
+  }, [suggestionsByFile, activeFileId]);
 
   const selectionRef = useRef(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
@@ -217,7 +223,7 @@ function EditorArea() {
     }
     
     try {
-      const currentSuggestions = useStore.getState().suggestions;
+      const currentSuggestions = useStore.getState().suggestionsByFile[activeFileId] || [];
       const stillExists = currentSuggestions.find(s => s.id === suggestion.id);
       if (!stillExists) return;
 
@@ -234,29 +240,29 @@ function EditorArea() {
         { range: totalRange, text: suggestion.text, forceMoveMarkers: true }
       ]);
       
-      useStore.getState().removeSuggestion(suggestion.id);
+      useStore.getState().removeSuggestion(activeFileId, suggestion.id);
       console.log('Suggestion accepted and removed');
       
     } catch (error) {
       console.warn('Error accepting suggestion:', error);
-      useStore.getState().removeSuggestion(suggestion.id);
+      useStore.getState().removeSuggestion(activeFileId, suggestion.id);
     }
-  }, [monaco]);
+  }, [monaco, activeFileId]);
 
   const handleRejectSuggestion = useCallback((suggestionId) => {
     console.log('Reject suggestion called:', suggestionId);
     try {
-      const s = useStore.getState().suggestions.find(x=>x.id===suggestionId);
+      const s = (useStore.getState().suggestionsByFile[activeFileId] || []).find(x => x.id === suggestionId);
       if(s){
         const delRange = plainToRange(s.deleteRange, monaco);
         editorRef.current.executeEdits('reject-suggestion', [{range: delRange, text:'', forceMoveMarkers:true}]);
       }
-      useStore.getState().removeSuggestion(suggestionId);
+      useStore.getState().removeSuggestion(activeFileId, suggestionId);
       console.log('Suggestion rejected and removed');
     } catch (error) {
       console.warn('Error rejecting suggestion:', error);
     }
-  }, [monaco]);
+  }, [monaco, activeFileId]);
 
   const [editorReady, setEditorReady] = useState(false);
 
@@ -432,11 +438,21 @@ function EditorArea() {
     const fileIdAtActionStart = activeFileId; // Capture file ID
     if (!selection || !editorRef.current || !fileIdAtActionStart) return;
     
+    // Guard: Don't send requests if there's no current project
+    if (!currentProject || !currentProject.project_id) {
+      console.warn('Cannot perform AI action: No current project selected');
+      return;
+    }
+    
     const selectedText = editorRef.current.getModel().getValueInRange(selection);
     setIsAiLoading(true);
 
     try {
-        const response = await apiService.post('/ai/gemini-action', { action, text: selectedText });
+        const response = await apiService.post('/ai/gemini-action', { 
+          action, 
+          text: selectedText,
+          projectId: currentProject.project_id 
+        });
         const newText = response.data.result;
 
         // Check if context is still valid before adding suggestion
@@ -454,7 +470,7 @@ function EditorArea() {
             const suggEndCol = lines[lines.length -1].length +1;
             const suggRangeObj = { startLineNumber: suggStartLine, startColumn: suggStartCol, endLineNumber: suggEndLine, endColumn: suggEndCol };
             const delRangeObj = { startLineNumber: origEnd.lineNumber, startColumn: origEnd.column, endLineNumber: suggEndLine, endColumn: suggEndCol };
-            useStore.getState().addSuggestion({ originalRange: origRangeObj, suggestionRange: suggRangeObj, deleteRange: delRangeObj, text: newText });
+            useStore.getState().addSuggestion(fileIdAtActionStart, { originalRange: origRangeObj, suggestionRange: suggRangeObj, deleteRange: delRangeObj, text: newText });
         }
 
         selectionRef.current = null;
@@ -480,22 +496,25 @@ function EditorArea() {
     const fileIdAtActionStart = activeFileId; // Capture file ID
     if (!selection || !editorRef.current || !customPrompt.trim() || !fileIdAtActionStart) return;
 
+    // Guard: Don't send requests if there's no current project
+    if (!currentProject || !currentProject.project_id) {
+      console.warn('Cannot perform custom AI action: No current project selected');
+      return;
+    }
+
     const selectedText = editorRef.current.getModel().getValueInRange(selection);
     setIsAiLoading(true);
     setIsCustomPromptOpen(false);
 
     try {
-        const response = await apiService.post('/ai/gemini-action', {
-            action: 'custom',
+        const response = await apiService.post('/ai/gemini-action', { 
+            action: 'custom', 
+            prompt: customPrompt,
             text: selectedText,
-            customPrompt: customPrompt,
-            context: {
-                fileName: activeFile.name,
-                fileContent: activeFile.content
-            }
+            projectId: currentProject.project_id
         });
         const newText = response.data.result;
-
+        
         // Check if context is still valid before adding suggestion
         if (useStore.getState().activeFileId === fileIdAtActionStart) {
             const origRangeObj = rangeToPlain(selection);
@@ -511,9 +530,9 @@ function EditorArea() {
             const suggEndCol = lines[lines.length -1].length +1;
             const suggRangeObj = { startLineNumber: suggStartLine, startColumn: suggStartCol, endLineNumber: suggEndLine, endColumn: suggEndCol };
             const delRangeObj = { startLineNumber: origEnd.lineNumber, startColumn: origEnd.column, endLineNumber: suggEndLine, endColumn: suggEndCol };
-            useStore.getState().addSuggestion({ originalRange: origRangeObj, suggestionRange: suggRangeObj, deleteRange: delRangeObj, text: newText });
+            useStore.getState().addSuggestion(fileIdAtActionStart, { originalRange: origRangeObj, suggestionRange: suggRangeObj, deleteRange: delRangeObj, text: newText });
         }
-
+        
         selectionRef.current = null;
         setIsTextSelected(false);
         setCustomPrompt(''); // Clear the prompt
@@ -568,10 +587,26 @@ function EditorArea() {
       case 'code': {
         const selectedText = model.getValueInRange(selection);
         let newText;
-        if (action === 'bold') newText = `**${selectedText}**`;
-        if (action === 'italic') newText = `*${selectedText}*`;
-        if (action === 'underline') newText = `<u>${selectedText}</u>`; // Non-standard markdown
-        if (action === 'code') newText = `\`${selectedText}\``;
+        let formatPatterns = {
+          'bold': { start: '**', end: '**' },
+          'italic': { start: '*', end: '*' },
+          'underline': { start: '<u>', end: '</u>' },
+          'code': { start: '`', end: '`' }
+        };
+
+        const pattern = formatPatterns[action];
+        const startPattern = pattern.start;
+        const endPattern = pattern.end;
+
+        // Check if text is already formatted
+        if (selectedText.startsWith(startPattern) && selectedText.endsWith(endPattern)) {
+          // Remove formatting (toggle off)
+          newText = selectedText.slice(startPattern.length, -endPattern.length);
+        } else {
+          // Apply formatting (toggle on)
+          newText = `${startPattern}${selectedText}${endPattern}`;
+        }
+        
         edits.push({ range: selection, text: newText });
         break;
       }
@@ -636,7 +671,7 @@ function EditorArea() {
         return 'plaintext';
     }
   };
-  
+
   const handleTabChange = (event, newValue) => {
     setActiveFileId(newValue);
   };

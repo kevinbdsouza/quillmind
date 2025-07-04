@@ -5,7 +5,7 @@
     "author": "Kevin Dsouza",
     "license": "MIT",
     "scripts": {
-        "dev": "wrangler pages dev --proxy 5173 -- npm run dev:frontend",
+        "dev": "wrangler pages dev --proxy 5173 --experimental-vectorize-bind-to-prod -- npm run dev:frontend",
         "dev:frontend": "vite",
         "dev:backend": "echo \"'dev:backend' is deprecated, use 'npm run dev' instead\"",
         "build": "vite build",
@@ -22,14 +22,17 @@
         "@mui/x-tree-view": "^7.9.0",
         "axios": "^1.7.2",
         "bcryptjs": "^2.4.3",
+        "diff": "^8.0.2",
         "dotenv": "^16.4.5",
         "jsonwebtoken": "^9.0.2",
         "jwt-decode": "^4.0.0",
+        "parse-diff": "^0.11.1",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
         "react-icons": "^5.5.0",
         "react-markdown": "^10.1.0",
         "react-router-dom": "^6.24.1",
+        "vite-plugin-node-polyfills": "^0.23.0",
         "zustand": "^4.5.4"
     },
     "devDependencies": {

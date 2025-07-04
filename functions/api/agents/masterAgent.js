@@ -47,7 +47,7 @@ Respond with only the single word: 'rag' or 'standard'.`;
 }
 
 export const routeRequest = async (body, env, user) => {
-    const { text, action, context } = body;
+    const { text, action, context, projectId } = body;
     const apiKey = env.GEMINI_API_KEY;
 
     if (!apiKey) {
@@ -69,12 +69,15 @@ export const routeRequest = async (body, env, user) => {
     const choice = await getRoutingChoice(text, context, apiKey);
 
     let agentResponse;
+    // Pass projectId along to the agents
+    const agentBody = { text, context, projectId, history: body.history }; 
+
     if (choice.includes('rag')) {
         console.log('Routing to RAG Agent');
-        agentResponse = await handleRagChat(body, env, user);
+        agentResponse = await handleRagChat(agentBody, env, user);
     } else {
         console.log('Routing to Standard Agent');
-        agentResponse = await handleStandardChat(body, env, user);
+        agentResponse = await handleStandardChat(agentBody, env, user);
     }
 
     // Clone the response to log its body without consuming the original response stream

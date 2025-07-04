@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { json, error } from './utils'; // Import shared helpers
 import { routeRequest } from './agents/masterAgent'; // Import the master agent
-import { indexProjectFiles } from './services/indexingService'; // Add this import at the top
+import { indexProjectFiles, indexSingleFile, removeFileFromIndex } from './services/indexingService'; // Add indexSingleFile and removeFileFromIndex imports
 
 // Manually create error and json response helpers to avoid itty-router
 
@@ -195,7 +195,21 @@ export const onRequest = async (context) => {
             [id, parent_id, name, type, type === 'file' ? (content || '') : null], 
             env
           );
-          return json({ ...result.rows[0], id: result.rows[0].file_id }, { status: 201 });
+          
+          const newFile = { ...result.rows[0], id: result.rows[0].file_id };
+          
+          // Automatically index the file if it's a file type and has content
+          if (type === 'file' && content && content.trim() !== '') {
+            try {
+              await indexSingleFile(newFile.file_id, env);
+              console.log(`Auto-indexed new file: ${newFile.name}`);
+            } catch (indexError) {
+              console.error(`Failed to auto-index new file ${newFile.name}:`, indexError);
+              // Don't fail the file creation if indexing fails
+            }
+          }
+          
+          return json(newFile, { status: 201 });
         }
       }
 
@@ -229,11 +243,26 @@ export const onRequest = async (context) => {
          const { content, name } = await request.json();
          if (typeof content !== 'string') return error(400, { message: 'Content must be a string.' });
          
+         // Get the file info before updating
+         const fileInfoResult = await query('SELECT file_id, name, type FROM files WHERE file_id = $1', [id], env);
+         const fileInfo = fileInfoResult.rows[0];
+         
          // Update the name if provided, otherwise just update content
          if(name) {
             await query('UPDATE files SET content = $1, name = $2 WHERE file_id = $3', [content, name, id], env);
          } else {
             await query('UPDATE files SET content = $1 WHERE file_id = $2', [content, id], env);
+         }
+
+         // Automatically re-index the file if it's a file type and has content
+         if (fileInfo && fileInfo.type === 'file' && content && content.trim() !== '') {
+           try {
+             await indexSingleFile(id, env);
+             console.log(`Auto-reindexed updated file: ${fileInfo.name}`);
+           } catch (indexError) {
+             console.error(`Failed to auto-reindex updated file ${fileInfo.name}:`, indexError);
+             // Don't fail the file update if indexing fails
+           }
          }
 
          return json({ message: `File ${id} updated.` });
@@ -242,6 +271,31 @@ export const onRequest = async (context) => {
         // Check if it's a folder to handle recursive delete
         const fileCheck = await query('SELECT type FROM files WHERE file_id = $1', [id], env);
         if (fileCheck.rows.length === 0) return error(404, { message: 'File not found.' });
+
+        // Get all file IDs that will be deleted (including recursive folder contents)
+        const getFilesToDeleteQuery = `
+          WITH RECURSIVE sub_files AS (
+            SELECT file_id, type FROM files WHERE file_id = $1
+            UNION ALL
+            SELECT f.file_id, f.type FROM files f
+            INNER JOIN sub_files sf ON f.parent_id = sf.file_id
+          )
+          SELECT file_id FROM sub_files WHERE type = 'file';
+        `;
+        
+        const filesToDeleteResult = await query(getFilesToDeleteQuery, [id], env);
+        const fileIdsToDelete = filesToDeleteResult.rows.map(row => row.file_id);
+        
+        // Remove files from vector store before deleting from database
+        for (const fileId of fileIdsToDelete) {
+          try {
+            await removeFileFromIndex(fileId, env);
+            console.log(`Removed file ${fileId} from vector store`);
+          } catch (indexError) {
+            console.error(`Failed to remove file ${fileId} from vector store:`, indexError);
+            // Continue with deletion even if vector store removal fails
+          }
+        }
 
         // Use a recursive query to delete a folder and all its contents
         const deleteQuery = `
@@ -295,7 +349,8 @@ export const onRequest = async (context) => {
       const authResult = authenticate(request, env);
       if (authResult.error) return authResult.error;
       const user = authResult.user;
-      return await handleAiAction(request, env, user);
+      const body = await request.json();
+      return await handleAiAction(body, env, user);
     }
 
     // Fallback for any unhandled routes
@@ -307,9 +362,8 @@ export const onRequest = async (context) => {
   }
 };
 
-const handleAiAction = async (request, env, user) => {
+const handleAiAction = async (body, env, user) => {
   try {
-    const body = await request.json();
     // Pass the full context (request body + env + user) to the master agent
     return routeRequest(body, env, user);
   } catch (err) {

@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "axios": "^1.7.2",
+    "diff": "^8.0.2",
+    "chromadb": "^1.8.1"
+  }
+}
