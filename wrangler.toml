@@ -1,6 +1,7 @@
 # wrangler.toml
 name = "quillmind"
 compatibility_date = "2025-07-01"
+pages_build_output_dir = "./dist"
 
 # Enable Node.js compatibility via a compatibility flag.
 # This is crucial for making libraries like 'pg' work.
