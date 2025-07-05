@@ -1,28 +1,38 @@
 import { handleStandardChat } from './standardAgent';
 import { handleRagChat } from './ragAgent';
+import { handleEditRequest } from './editAgent';
 import { error, json } from '../utils';
 import axios from 'axios';
 
 const getRoutingChoice = async (text, context, apiKey) => {
     const contextProvided = context && context.files && context.files.length > 0;
 
-    const prompt = `You are a master routing agent. Your job is to classify a user's query into one of two categories based on the query and whether file context is provided.
+    const prompt = `You are a master routing agent. Your job is to classify a user's query into one of three categories based on the query and whether file context is provided.
 
 Categories:
-1. 'rag': The query requires searching across the entire project's files to be answered properly. This is for questions about how different parts of the code interact, broad project-level questions, or questions about files that are NOT provided in the context.
-2. 'standard': The query is a general conversation topic OR it can be answered using ONLY the specific file context that has been provided by the user.
+1. 'edit': The query requests to modify, edit, change, update, fix, or refactor code. This includes:
+   - Direct edit requests: "edit this file", "modify the function", "change the code", "update the component"
+   - Fix requests: "fix this bug", "correct the error", "resolve the issue"
+   - Refactor requests: "refactor this code", "improve the structure", "optimize this function"
+   - Add/remove requests: "add a new feature", "remove this line", "insert new code"
+   - Replace requests: "replace this with", "substitute the code", "swap the implementation"
+
+2. 'rag': The query requires searching across the entire project's files to be answered properly. This is for questions about how different parts of the code interact, broad project-level questions, or questions about files that are NOT provided in the context.
+
+3. 'standard': The query is a general conversation topic OR it can be answered using ONLY the specific file context that has been provided by the user.
 
 **Analysis:**
 - **User Query:** "${text}"
 - **File Context Provided:** ${contextProvided ? 'Yes' : 'No'}
 
 **Decision Logic:**
+- If the query contains edit-related keywords (edit, modify, change, update, fix, refactor, add, remove, replace, correct, improve, optimize, insert, substitute, swap) AND requests code changes, choose 'edit'.
 - If the query is general (e.g., "hello", "what is react?"), choose 'standard'.
 - If File Context is 'Yes' and the query is about that context (e.g., "explain this function", "what does this code do?"), choose 'standard'.
 - If the query is about the project but requires knowledge beyond the provided context (e.g., "how does authentication work?", "where is this function used?"), choose 'rag'.
 - If File Context is 'No' and the query is about the project, choose 'rag'.
 
-Respond with only the single word: 'rag' or 'standard'.`;
+Respond with only the single word: 'edit', 'rag', or 'standard'.`;
 
     const model = 'gemini-1.5-flash';
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -72,7 +82,10 @@ export const routeRequest = async (body, env, user) => {
     // Pass projectId along to the agents
     const agentBody = { text, context, projectId, history: body.history }; 
 
-    if (choice.includes('rag')) {
+    if (choice.includes('edit')) {
+        console.log('Routing to Edit Agent');
+        agentResponse = await handleEditRequest(agentBody, env, user);
+    } else if (choice.includes('rag')) {
         console.log('Routing to RAG Agent');
         agentResponse = await handleRagChat(agentBody, env, user);
     } else {

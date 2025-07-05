@@ -260,6 +260,14 @@ const useStore = create((set, get) => ({
     }
   }),
 
+  // Add new action to directly set suggestions for a file (replaces existing ones)
+  setSuggestionsForFile: (fileId, suggestionsArray) => set(state => ({
+    suggestionsByFile: {
+      ...state.suggestionsByFile,
+      [fileId]: suggestionsArray,
+    }
+  })),
+
   // --- Authentication Actions ---
   login: (userData, token) => {
     try {
