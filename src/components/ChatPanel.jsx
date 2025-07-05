@@ -191,6 +191,34 @@ function ChatPanel() {
 
       // Use the 'chat' action for general conversation
       const response = await apiService.post('/ai/gemini-action', payload);
+      
+      console.log('Full AI response:', response.data);
+
+      // Handle edit agent responses
+      if (response.data.filesToOpen && response.data.suggestions) {
+        console.log('Edit agent response detected, opening files and adding suggestions');
+        console.log('Files to open:', response.data.filesToOpen);
+        console.log('Suggestions:', response.data.suggestions);
+        
+        // Close all currently open files and open only files with edits
+        const { openFiles, closeFile, openFile, addSuggestion } = useStore.getState();
+        
+        // Close all currently open files
+        openFiles.forEach(file => {
+          closeFile(file.file_id);
+        });
+        
+        // Open only files with edits
+        response.data.filesToOpen.forEach(file => {
+          openFile(file);
+        });
+        
+        // Send edit agent suggestions to be processed by the editor
+        // We'll use a custom message to trigger the editor to handle these
+        window.dispatchEvent(new CustomEvent('editAgentSuggestions', {
+          detail: { suggestions: response.data.suggestions }
+        }));
+      }
 
       // Update chat with AI response
       setChats(prevChats =>
