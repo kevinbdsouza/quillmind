@@ -64,6 +64,23 @@ const useStore = create((set, get) => ({
     });
   },
   setProjectFiles: (files) => set({ projectFiles: files }),
+  
+  // Function to refresh project files from the API
+  refreshProjectFiles: async () => {
+    const { currentProject } = get();
+    if (!currentProject) return;
+    
+    try {
+      // Import at the point of use to avoid circular dependencies
+      const { getProjectFiles } = await import('./apiService');
+      const updatedFiles = await getProjectFiles(currentProject.project_id);
+      set({ projectFiles: updatedFiles });
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to refresh project files:', error);
+      return { success: false, error: error.message };
+    }
+  },
 
   openFile: (fileToOpen) => {
     const { openFiles } = get();

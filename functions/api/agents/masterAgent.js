@@ -1,6 +1,7 @@
 import { handleStandardChat } from './standardAgent';
 import { handleRagChat } from './ragAgent';
 import { handleEditRequest } from './editAgent';
+import { handleFileCreationRequest } from './fileCreationAgent';
 import { error, json } from '../utils';
 import axios from 'axios';
 
@@ -63,6 +64,12 @@ export const routeRequest = async (body, env, user) => {
     if (!apiKey) {
         console.error('GEMINI_API_KEY is not set in the environment variables.');
         return error(500, { message: 'AI service configuration error.' });
+    }
+
+    // Explicitly handle file creation actions
+    if (action && ['create_file', 'delete_file', 'rename_file', 'create_book_structure'].includes(action)) {
+        console.log(`Routing to File Creation Agent for action: ${action}`);
+        return await handleFileCreationRequest(body, env, user);
     }
 
     // Explicitly handle the summarization action

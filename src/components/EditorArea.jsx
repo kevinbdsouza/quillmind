@@ -5,14 +5,14 @@ import {
   FormatBold, FormatItalic, FormatUnderlined, 
   FormatListBulleted, FormatListNumbered, Code, 
   FormatQuote, Redo, Undo, AddComment,
-  Close as CloseIcon,
+  Close as CloseIcon, MenuBook,
 } from '@mui/icons-material';
 import Editor, { loader, useMonaco } from '@monaco-editor/react';
 import apiService from '../apiService';
 import useStore from '../store';
 import { updateFile } from '../apiService'; // Import updateFile
 
-const suggestionHighlightStyle = `
+  const suggestionHighlightStyle = `
   .suggestion-highlight-old {
     background-color: rgba(255, 99, 71, 0.3);
     border-radius: 3px;
@@ -38,8 +38,8 @@ const suggestionHighlightStyle = `
     padding: 2px 4px !important;
     border: 1px solid #555 !important;
     box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important;
-    z-index: 10000 !important;
-    position: relative !important;
+    z-index: 10001 !important;
+    position: fixed !important;
   }
   .suggestion-inline-button {
     display: inline-flex !important;
@@ -114,6 +114,7 @@ const EditorToolbar = ({ onAction, onAiAction, isTextSelected, isAiLoading }) =>
   ];
   const aiActions = [
     { label: 'Custom', icon: <AddComment />, action: 'custom' },
+    { label: 'Create Book Structure', icon: <MenuBook />, action: 'create_book_structure' },
   ];
   
   return (
@@ -164,7 +165,7 @@ const EditorToolbar = ({ onAction, onAiAction, isTextSelected, isAiLoading }) =>
                     e.preventDefault();
                     onAiAction(item.action);
                 }}
-                disabled={!isTextSelected || isAiLoading}
+                disabled={item.action === 'create_book_structure' ? isAiLoading : (!isTextSelected || isAiLoading)}
               >
                 {item.icon}
               </IconButton>
@@ -177,7 +178,7 @@ const EditorToolbar = ({ onAction, onAiAction, isTextSelected, isAiLoading }) =>
 };
 
 // Remove the old SuggestionWidget component and create inline controls
-const createInlineControls = (suggestionId, onAccept, onReject, onPreview) => {
+const createInlineControls = (suggestionId, onAccept, onReject, onPreview, suggestionType = 'edit-agent') => {
   const controlsContainer = document.createElement('div');
   controlsContainer.className = 'suggestion-inline-controls';
   
@@ -194,35 +195,9 @@ const createInlineControls = (suggestionId, onAccept, onReject, onPreview) => {
     padding: 2px 4px !important;
     border: 1px solid #555 !important;
     box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important;
-    z-index: 10000 !important;
+    z-index: 10001 !important;
     position: fixed !important;
   `;
-  
-  const previewButton = document.createElement('button');
-  previewButton.className = 'suggestion-inline-button suggestion-preview-button';
-  previewButton.innerHTML = '👁';
-  previewButton.title = 'Preview';
-  previewButton.style.cssText = `
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    width: 20px !important;
-    height: 20px !important;
-    border-radius: 3px !important;
-    border: 1px solid #555 !important;
-    cursor: pointer !important;
-    font-size: 12px !important;
-    font-weight: bold !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    background-color: #2196f3 !important;
-    color: white !important;
-  `;
-  previewButton.onclick = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    onPreview();
-  };
   
   const acceptButton = document.createElement('button');
   acceptButton.className = 'suggestion-inline-button suggestion-accept-button';
@@ -276,7 +251,36 @@ const createInlineControls = (suggestionId, onAccept, onReject, onPreview) => {
     onReject();
   };
   
-  controlsContainer.appendChild(previewButton);
+  // Only add preview button for edit-agent suggestions (not for custom AI or full content)
+  if (suggestionType === 'edit-agent') {
+    const previewButton = document.createElement('button');
+    previewButton.className = 'suggestion-inline-button suggestion-preview-button';
+    previewButton.innerHTML = '👁';
+    previewButton.title = 'Preview';
+    previewButton.style.cssText = `
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      width: 20px !important;
+      height: 20px !important;
+      border-radius: 3px !important;
+      border: 1px solid #555 !important;
+      cursor: pointer !important;
+      font-size: 12px !important;
+      font-weight: bold !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      background-color: #2196f3 !important;
+      color: white !important;
+    `;
+    previewButton.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onPreview();
+    };
+    controlsContainer.appendChild(previewButton);
+  }
+  
   controlsContainer.appendChild(acceptButton);
   controlsContainer.appendChild(rejectButton);
   
@@ -295,13 +299,22 @@ const plainToRange = (pl, monaco)=> new monaco.Range(pl.startLineNumber, pl.star
 // Add deterministic suggestion ID helper after plainToRange
 const getSuggestionId = (s) => {
   if (s.id) return String(s.id);
+  
+  // For suggestions without an ID, generate a deterministic one
   const str = JSON.stringify(s);
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     hash = ((hash << 5) - hash) + str.charCodeAt(i);
     hash |= 0; // Convert to 32bit integer
   }
-  return `sugg-${hash}`;
+  const suggestionId = `sugg-${Math.abs(hash)}`;
+  
+  // Set the ID on the suggestion object if it doesn't exist
+  if (!s.id) {
+    s.id = suggestionId;
+  }
+  
+  return suggestionId;
 };
 
 function EditorArea() {
@@ -349,9 +362,56 @@ function EditorArea() {
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [previewContent, setPreviewContent] = useState('');
   const [previewTitle, setPreviewTitle] = useState('');
+  const previewFileRef = useRef(null);
+  
+  // Book structure dialog state
+  const [isBookStructureOpen, setIsBookStructureOpen] = useState(false);
+  const [bookTitle, setBookTitle] = useState('');
+  const [storyGoal, setStoryGoal] = useState('');
+  const [numberOfChapters, setNumberOfChapters] = useState(10);
+  const bookStructureInputRef = useRef(null);
   
   // Track previous file ID so we can reset processed suggestions when switching away
   const prevFileIdRef = useRef(null);
+  
+  // Add effect to handle file switching - preserve suggestion state
+  useEffect(() => {
+    if (activeFileId && activeFileId !== prevFileIdRef.current) {
+      console.log(`Switching from file ${prevFileIdRef.current} to ${activeFileId}`);
+      
+      // Store current suggestion state before switching
+      const previousFileId = prevFileIdRef.current;
+      if (previousFileId && Object.keys(decorationsRef.current).length > 0) {
+        console.log(`Preserving suggestion state for file ${previousFileId}`);
+        // The suggestions are already in the store, so we don't need to do anything special
+        // The decorationsRef and contentWidgets will be cleared by editor re-mount
+        // But they'll be recreated when suggestions are reprocessed
+      }
+      
+      // Don't clear the refs immediately when switching files - let the editor restoration handle this
+      // This preserves suggestion highlights when switching between files
+      // Only clear processed suggestions ref to allow reprocessing if needed
+      processedSuggestionIdsRef.current.clear();
+      
+      // Close preview if it was open and reset scroll position
+      if (isPreviewOpen) {
+        setIsPreviewOpen(false);
+        setPreviewContent('');
+        setPreviewTitle('');
+        previewFileRef.current = null;
+      }
+      
+      // Reset scroll position immediately when switching files
+      setTimeout(() => {
+        const previewContainer = document.querySelector('.preview-scroll-container');
+        if (previewContainer) {
+          previewContainer.scrollTop = 0;
+        }
+      }, 50);
+      
+      prevFileIdRef.current = activeFileId;
+    }
+  }, [activeFileId, isPreviewOpen]);
   
   // Inject CSS styles for suggestions
   useEffect(() => {
@@ -422,8 +482,45 @@ function EditorArea() {
       immediate.forEach(processSuggestion);
     };
 
+    const handleBookStructureSuggestions = (event) => {
+      console.log('Book structure suggestions event received:', event);
+      const { detail } = event;
+      const suggestionsArr = detail.suggestions;
+
+      if (!Array.isArray(suggestionsArr)) {
+        console.error('Book structure suggestions is not an array:', suggestionsArr);
+        return;
+      }
+
+      // Handle full content suggestions for newly created files
+      suggestionsArr.forEach(suggestion => {
+        if (suggestion.type === 'full_content') {
+          // Create a special suggestion for full file content
+          const fullContentSuggestion = {
+            id: suggestion.id,
+            fileName: suggestion.fileName,
+            fileId: suggestion.fileId,
+            content: suggestion.content,
+            type: 'full_content_suggestion',
+            // For empty files, these ranges don't matter as they'll be recalculated
+            originalRange: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 },
+            suggestionRange: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 },
+            deleteRange: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 },
+            text: suggestion.content
+          };
+          
+          const { setSuggestionsForFile } = useStore.getState();
+          setSuggestionsForFile(suggestion.fileId, [fullContentSuggestion]);
+        }
+      });
+    };
+
     window.addEventListener('editAgentSuggestions', handleEditAgentSuggestions);
-    return () => window.removeEventListener('editAgentSuggestions', handleEditAgentSuggestions);
+    window.addEventListener('bookStructureSuggestions', handleBookStructureSuggestions);
+    return () => {
+      window.removeEventListener('editAgentSuggestions', handleEditAgentSuggestions);
+      window.removeEventListener('bookStructureSuggestions', handleBookStructureSuggestions);
+    };
   }, [monaco]);
 
   // Once the editor is ready, process any buffered suggestions
@@ -434,11 +531,161 @@ function EditorArea() {
     }
   }, [editorReady, pendingEditSuggestions]);
 
+  // Add comprehensive cleanup function
+  const cleanupSuggestion = (suggestionId, force = false) => {
+    if (!editorRef.current && !force) return;
+    
+    const editor = editorRef.current;
+    const decorationData = decorationsRef.current[suggestionId];
+    
+    if (decorationData) {
+      // Remove all decorations - try multiple approaches to ensure they're removed
+      const idsToRemove = [decorationData.oldDecorationId, decorationData.newDecorationId].filter(Boolean);
+      if (idsToRemove.length > 0 && editor) {
+        try {
+          // Method 1: Direct removal
+          editor.deltaDecorations(idsToRemove, []);
+          
+          // Method 2: Force removal by setting empty decorations
+          setTimeout(() => {
+            if (editor && editor.getModel()) {
+              try {
+                editor.deltaDecorations(idsToRemove, []);
+              } catch (e) {
+                console.warn('Secondary decoration removal failed:', e);
+              }
+            }
+          }, 10);
+        } catch (e) {
+          console.warn('Error removing decorations:', e);
+        }
+      }
+      
+      // Remove widget
+      const widget = contentWidgets.current[suggestionId];
+      if (widget && editor) {
+        try {
+          editor.removeContentWidget(widget);
+        } catch (e) {
+          console.warn('Error removing widget:', e);
+        }
+      }
+      
+      // Clean up references immediately
+      delete contentWidgets.current[suggestionId];
+      delete decorationsRef.current[suggestionId];
+    }
+    
+    // Remove from processed set
+    processedSuggestionIdsRef.current.delete(suggestionId);
+    
+    // Remove from store
+    const fileId = useStore.getState().activeFileId;
+    if (fileId) {
+      useStore.getState().removeSuggestion(fileId, suggestionId);
+    }
+  };
+
+  // Add function to clean up all suggestions for current file
+  const cleanupAllSuggestions = () => {
+    if (!editorRef.current) return;
+    
+    const editor = editorRef.current;
+    
+    console.log(`Cleaning up ${Object.keys(decorationsRef.current).length} decorations and ${Object.keys(contentWidgets.current).length} widgets`);
+    
+    // Get all decoration IDs to remove
+    const allDecorationIds = Object.values(decorationsRef.current).flatMap(d =>
+      [d.oldDecorationId, d.newDecorationId].filter(Boolean)
+    );
+    
+    // Remove all decorations at once
+    if (allDecorationIds.length > 0) {
+      try {
+        editor.deltaDecorations(allDecorationIds, []);
+        
+        // Force removal with a secondary attempt
+        setTimeout(() => {
+          if (editor && editor.getModel()) {
+            try {
+              editor.deltaDecorations(allDecorationIds, []);
+            } catch (e) {
+              console.warn('Secondary decoration cleanup failed:', e);
+            }
+          }
+        }, 50);
+      } catch (e) {
+        console.warn('Error removing all decorations:', e);
+      }
+    }
+    
+    // Fallback: Try to remove all decorations by getting current decorations
+    try {
+      const model = editor.getModel();
+      if (model) {
+        const allCurrentDecorations = model.getAllDecorations();
+        const suggestionDecorations = allCurrentDecorations.filter(decoration => 
+          decoration.options.className && 
+          (decoration.options.className.includes('suggestion-highlight') || 
+           decoration.options.className.includes('suggestion-'))
+        );
+        
+        if (suggestionDecorations.length > 0) {
+          const decorationIds = suggestionDecorations.map(d => d.id);
+          editor.deltaDecorations(decorationIds, []);
+        }
+      }
+    } catch (e) {
+      console.warn('Fallback decoration cleanup failed:', e);
+    }
+    
+    // Remove all widgets - be more aggressive
+    Object.entries(contentWidgets.current).forEach(([suggestionId, widget]) => {
+      if (widget) {
+        try {
+          console.log(`Removing widget for suggestion: ${suggestionId}`);
+          editor.removeContentWidget(widget);
+        } catch (e) {
+          console.warn(`Error removing widget ${suggestionId}:`, e);
+        }
+      }
+    });
+    
+    // Additional cleanup: Try to remove any orphaned suggestion widgets by ID pattern
+    try {
+      // Get all current content widgets and remove any that look like suggestion widgets
+      const allWidgets = editor.getContentWidgets();
+      allWidgets.forEach(widget => {
+        const widgetId = widget.getId();
+        if (widgetId && widgetId.includes('suggestion.inline.')) {
+          try {
+            console.log(`Removing orphaned widget: ${widgetId}`);
+            editor.removeContentWidget(widget);
+          } catch (e) {
+            console.warn(`Error removing orphaned widget ${widgetId}:`, e);
+          }
+        }
+      });
+    } catch (e) {
+      console.warn('Error in orphaned widget cleanup:', e);
+    }
+    
+    // Clear all references
+    decorationsRef.current = {};
+    contentWidgets.current = {};
+    processedSuggestionIdsRef.current.clear();
+    
+    console.log('Cleanup completed');
+  };
+
   const processSuggestion = (suggestion) => {
     const suggestionId = getSuggestionId(suggestion);
 
-    // If currently displayed or already processed, skip
-    if (decorationsRef.current[suggestionId] || processedSuggestionIdsRef.current.has(suggestionId)) return;
+    // If currently displayed, skip processing
+    if (decorationsRef.current[suggestionId]) {
+      console.log(`Suggestion ${suggestionId} already displayed, skipping`);
+      return;
+    }
 
     if (!editorRef.current || !monaco || !monaco.editor) return;
     const editor = editorRef.current;
@@ -450,10 +697,13 @@ function EditorArea() {
 
     const isEditAgentSuggestion = suggestion.oldContentFull && suggestion.newContentFull;
     const isCustomAISuggestion = suggestion.originalRange && suggestion.suggestionRange && suggestion.text;
+    const isFullContentSuggestion = suggestion.type === 'full_content_suggestion' && suggestion.text;
 
+    console.log(`Processing suggestion ${suggestionId} for file ${activeFileId}`);
+    
     if (isEditAgentSuggestion) {
       processEditAgentSuggestion(suggestion, suggestionId);
-    } else if (isCustomAISuggestion) {
+    } else if (isCustomAISuggestion || isFullContentSuggestion) {
       processCustomAISuggestion(suggestion, suggestionId);
     }
     
@@ -466,6 +716,25 @@ function EditorArea() {
     const editor = editorRef.current;
     const model = editor.getModel();
     if (!model) return;
+
+    // Check if this suggestion is already being displayed
+    if (decorationsRef.current[suggestionId]) {
+      console.warn(`Suggestion ${suggestionId} already displayed, skipping`);
+      return;
+    }
+
+    // Check for existing orphaned widgets and remove them
+    const expectedWidgetId = `suggestion.inline.${suggestionId}`;
+    try {
+      const existingWidgets = editor.getContentWidgets();
+      const orphanedWidget = existingWidgets.find(w => w.getId() === expectedWidgetId);
+      if (orphanedWidget) {
+        console.log(`Found orphaned widget ${expectedWidgetId}, removing before creating new one`);
+        editor.removeContentWidget(orphanedWidget);
+      }
+    } catch (e) {
+      console.warn('Error checking for orphaned widgets:', e);
+    }
 
     const { oldContentFull, newContentFull, occurrenceIndex = 0, fileName } = suggestion;
 
@@ -491,12 +760,13 @@ function EditorArea() {
 
     const [oldDecorationId] = editor.deltaDecorations([], [oldDecoration]);
 
-    // Create inline controls after the old text
+    // Create inline controls after the old text - edit-agent type shows preview
     const controlsContainer = createInlineControls(
       suggestionId,
       () => handleAcceptEditSuggestion(suggestionId),
       () => handleRejectEditSuggestion(suggestionId),
-      () => handlePreviewEditSuggestion(suggestionId)
+      () => handlePreviewEditSuggestion(suggestionId),
+      'edit-agent'
     );
 
     // Add inline widget positioned after the old text
@@ -550,15 +820,71 @@ function EditorArea() {
     const model = editor.getModel();
     if (!model) return;
 
-    const { originalRange, suggestionRange, deleteRange, text } = suggestion;
+    // Check if this suggestion is already being displayed
+    if (decorationsRef.current[suggestionId]) {
+      console.warn(`Suggestion ${suggestionId} already displayed, skipping`);
+      return;
+    }
 
-    // Convert plain range objects to Monaco Range objects
-    const originalMonacoRange = plainToRange(originalRange, monaco);
-    const suggestionMonacoRange = plainToRange(suggestionRange, monaco);
+    // Check for existing orphaned widgets and remove them
+    const expectedWidgetId = `suggestion.inline.${suggestionId}`;
+    try {
+      const existingWidgets = editor.getContentWidgets();
+      const orphanedWidget = existingWidgets.find(w => w.getId() === expectedWidgetId);
+      if (orphanedWidget) {
+        console.log(`Found orphaned widget ${expectedWidgetId}, removing before creating new one`);
+        editor.removeContentWidget(orphanedWidget);
+      }
+    } catch (e) {
+      console.warn('Error checking for orphaned widgets:', e);
+    }
+
+    const { originalRange, suggestionRange, deleteRange, text } = suggestion;
+    const isFullContentSuggestion = suggestion.type === 'full_content_suggestion';
+
+    let actualOriginalRange, actualSuggestionRange, actualDeleteRange;
+
+    if (isFullContentSuggestion) {
+      // For full content suggestions (new files), insert the text first
+      const currentContent = model.getValue();
+      const isEmptyFile = !currentContent || currentContent.trim() === '';
+      
+      if (isEmptyFile) {
+        // Insert the text at the beginning of the empty file
+        const insertPosition = new monaco.Range(1, 1, 1, 1);
+        editor.executeEdits('insert-suggestion', [{
+          range: insertPosition,
+          text: text,
+          forceMoveMarkers: true,
+        }]);
+        
+        // Calculate the ranges after insertion
+        const lines = text.split('\n');
+        const endLine = lines.length;
+        const endColumn = lines[lines.length - 1].length + 1;
+        
+        actualOriginalRange = new monaco.Range(1, 1, 1, 1); // Empty range at start
+        actualSuggestionRange = new monaco.Range(1, 1, endLine, endColumn); // The inserted text
+        actualDeleteRange = new monaco.Range(1, 1, endLine, endColumn); // Range to delete if rejected
+      } else {
+        // File already has the generated content (e.g., after switching away and back).
+        // Highlight the entire file so the user can still accept/reject it.
+        const endLine = model.getLineCount();
+        const endColumn = model.getLineContent(endLine).length + 1;
+        actualOriginalRange = new monaco.Range(1, 1, 1, 1);
+        actualSuggestionRange = new monaco.Range(1, 1, endLine, endColumn);
+        actualDeleteRange = new monaco.Range(1, 1, endLine, endColumn);
+      }
+    } else {
+      // Regular custom AI suggestion
+      actualOriginalRange = plainToRange(originalRange, monaco);
+      actualSuggestionRange = plainToRange(suggestionRange, monaco);
+      actualDeleteRange = deleteRange ? plainToRange(deleteRange, monaco) : null;
+    }
     
     // Create decorations for both old and new text
     const oldDecoration = {
-      range: originalMonacoRange,
+      range: actualOriginalRange,
       options: {
         className: 'suggestion-highlight-old',
         stickiness: monaco.editor.TrackedRangeStickiness?.NeverGrowsWhenTypingAtEdges || 1,
@@ -566,7 +892,7 @@ function EditorArea() {
     };
     
     const newDecoration = {
-      range: suggestionMonacoRange,
+      range: actualSuggestionRange,
       options: {
         className: 'suggestion-highlight-new',
         stickiness: monaco.editor.TrackedRangeStickiness?.NeverGrowsWhenTypingAtEdges || 1,
@@ -575,12 +901,14 @@ function EditorArea() {
     
     const [oldDecorationId, newDecorationId] = editor.deltaDecorations([], [oldDecoration, newDecoration]);
 
-    // Create inline controls after the new text
+    // Create inline controls after the new text - custom-ai type doesn't show preview
+    const suggestionType = isFullContentSuggestion ? 'full-content' : 'custom-ai';
     const controlsContainer = createInlineControls(
       suggestionId,
       () => handleAcceptCustomSuggestion(suggestionId),
       () => handleRejectCustomSuggestion(suggestionId),
-      () => handlePreviewCustomSuggestion(suggestionId)
+      () => handlePreviewCustomSuggestion(suggestionId),
+      suggestionType
     );
 
     // Add inline widget positioned after the new text
@@ -589,24 +917,24 @@ function EditorArea() {
       getDomNode: () => controlsContainer,
       getPosition: () => {
         const model = editor.getModel();
-        const lineContent = model.getLineContent(suggestionMonacoRange.endLineNumber);
+        const lineContent = model.getLineContent(actualSuggestionRange.endLineNumber);
         const maxColumn = lineContent.length;
         
         // Calculate if we're likely to be on the left side vs right side
-        const isLeftSide = suggestionMonacoRange.endColumn < maxColumn * 0.6;
+        const isLeftSide = actualSuggestionRange.endColumn < maxColumn * 0.6;
         
         // Use different positioning strategy based on side
         let safeColumn;
         if (isLeftSide) {
           // For left side, position at the end of the suggestion plus small buffer
-          safeColumn = Math.min(suggestionMonacoRange.endColumn + 2, maxColumn);
+          safeColumn = Math.min(actualSuggestionRange.endColumn + 2, maxColumn);
         } else {
           // For right side, position well before the minimap area
-          safeColumn = Math.min(suggestionMonacoRange.endColumn, Math.max(1, maxColumn - 30));
+          safeColumn = Math.min(actualSuggestionRange.endColumn, Math.max(1, maxColumn - 30));
         }
         
         return {
-          position: { lineNumber: suggestionMonacoRange.endLineNumber, column: safeColumn },
+          position: { lineNumber: actualSuggestionRange.endLineNumber, column: safeColumn },
           preference: [
             monaco.editor.ContentWidgetPositioningPreference?.BELOW ?? 2,
             monaco.editor.ContentWidgetPositioningPreference?.ABOVE ?? 1
@@ -621,53 +949,71 @@ function EditorArea() {
     decorationsRef.current[suggestionId] = {
       oldDecorationId,
       newDecorationId,
-      originalRange,
-      suggestionRange,
-      deleteRange,
+      originalRange: actualOriginalRange,
+      suggestionRange: actualSuggestionRange,
+      deleteRange: actualDeleteRange,
       text,
       fileId: activeFileId,
-      type: 'custom-ai'
+      type: suggestionType
     };
     contentWidgets.current[suggestionId] = widget;
   };
 
-  useEffect(() => {
-    const previousFileId = prevFileIdRef.current;
-
-    // When active file changes, only clear decorations and widgets for the current editor
-    // Don't remove suggestions from store - they should persist
-    if (editorRef.current && previousFileId !== activeFileId) {
-      // Clear existing decorations and widgets from the previous file
-      const allDecs = Object.values(decorationsRef.current).flatMap(d =>
-        [d.oldDecorationId, d.newDecorationId].filter(Boolean)
-      );
-      if (allDecs.length > 0) {
-        editorRef.current.deltaDecorations(allDecs, []);
-      }
-      Object.values(contentWidgets.current).forEach(w => {
-        if (w && editorRef.current) {
-          editorRef.current.removeContentWidget(w);
-        }
-      });
-    }
-
-    // Reset in-editor references for the new file
-    decorationsRef.current = {};
-    contentWidgets.current = {};
-    processedSuggestionIdsRef.current.clear();
-
-    // Update previous file tracker
-    prevFileIdRef.current = activeFileId;
-  }, [activeFileId]);
-
   // This effect will process suggestions when they change for the active file
   useEffect(() => {
-    if (suggestions.length > 0 && editorRef.current && monaco && activeFile) {
+    if (suggestions.length > 0 && editorRef.current && monaco && activeFile && editorReady) {
       console.log(`Processing ${suggestions.length} suggestions for ${activeFile.name}`);
-      // Small delay to ensure the editor is fully ready after file switch
+      
+      // Only clean up orphaned widgets, but preserve decorations for file switches
+      if (editorRef.current) {
+        const editor = editorRef.current;
+        try {
+          const allWidgets = editor.getContentWidgets();
+          const orphanedWidgets = allWidgets.filter(w => 
+            w.getId() && w.getId().includes('suggestion.inline.') && 
+            !decorationsRef.current[w.getId().replace('suggestion.inline.', '')]
+          );
+          
+          orphanedWidgets.forEach(widget => {
+            try {
+              console.log(`Removing orphaned widget: ${widget.getId()}`);
+              editor.removeContentWidget(widget);
+            } catch (e) {
+              console.warn('Error removing orphaned widget:', e);
+            }
+          });
+        } catch (e) {
+          console.warn('Error checking for orphaned widgets:', e);
+        }
+      }
+      
+      // Process suggestions to ensure both decorations and widgets are present
       setTimeout(() => {
-        suggestions.forEach(processSuggestion);
-      }, 100);
+        if (editorRef.current && monaco && activeFile) {
+          const model = editorRef.current.getModel();
+          if (model) {
+            console.log('Editor model ready, processing suggestions');
+            
+            // Check each suggestion and ensure it has both decoration and widget
+            suggestions.forEach(suggestion => {
+              const suggestionId = getSuggestionId(suggestion);
+              const hasDecoration = decorationsRef.current[suggestionId];
+              const hasWidget = contentWidgets.current[suggestionId];
+              
+              console.log(`Suggestion ${suggestionId}: decoration=${!!hasDecoration}, widget=${!!hasWidget}`);
+              
+              // If missing either decoration or widget, reprocess the suggestion
+              if (!hasDecoration || !hasWidget) {
+                console.log(`Reprocessing suggestion ${suggestionId} (missing decoration or widget)`);
+                processSuggestion(suggestion);
+              }
+            });
+          }
+        }
+      }, 300);
+    } else if (suggestions.length === 0) {
+      // If no suggestions, clean up any remaining decorations
+      cleanupAllSuggestions();
     }
   }, [suggestions, monaco, activeFile?.file_id, editorReady]);
 
@@ -724,6 +1070,24 @@ function EditorArea() {
       return () => clearTimeout(refreshTimeout);
     }
   }, [suggestions.length]);
+  
+  // Process suggestions when they change for the active file
+  useEffect(() => {
+    if (editorRef.current && monaco && activeFileId && suggestions.length > 0) {
+      console.log(`Processing ${suggestions.length} suggestions for file ${activeFileId}`);
+      
+      // Only process suggestions that haven't been processed yet
+      const unprocessedSuggestions = suggestions.filter(suggestion => {
+        const suggestionId = getSuggestionId(suggestion);
+        return !processedSuggestionIdsRef.current.has(suggestionId);
+      });
+      
+      if (unprocessedSuggestions.length > 0) {
+        console.log(`Found ${unprocessedSuggestions.length} unprocessed suggestions`);
+        unprocessedSuggestions.forEach(processSuggestion);
+      }
+    }
+  }, [suggestions, activeFileId, monaco]);
 
   const handleDialogEntered = () => {
     // Focus the input field when the dialog animation completes
@@ -735,6 +1099,12 @@ function EditorArea() {
 
   const handleEditorDidMount = (editor) => {
     editorRef.current = editor;
+    
+    // Clear any existing editor-specific references since we have a new editor instance
+    // But preserve suggestions in the store - they will be recreated for the new editor
+    decorationsRef.current = {};
+    contentWidgets.current = {};
+    
     setEditorReady(true);
 
     // Add a listener for selection changes
@@ -755,8 +1125,22 @@ function EditorArea() {
           }
     });
 
-    // Note: Suggestions are processed in the useEffect when they change, not here
-    // This prevents duplicate processing
+    // When editor is remounted (due to file switch), ensure suggestions are processed
+    setTimeout(() => {
+      if (suggestions.length > 0 && editorRef.current && monaco && activeFile) {
+        console.log(`Processing ${suggestions.length} suggestions after editor mount for ${activeFile.name}`);
+        
+        // Process suggestions with a delay to ensure editor is fully ready
+        setTimeout(() => {
+          suggestions.forEach(suggestion => {
+            const suggestionId = getSuggestionId(suggestion);
+            // Always process since we cleared the refs above for the new editor instance
+            console.log(`Recreating suggestion ${suggestionId} after editor mount`);
+            processSuggestion(suggestion);
+          });
+        }, 100);
+      }
+    }, 200);
   };
 
   const handleAiAction = async (action) => {
@@ -764,6 +1148,11 @@ function EditorArea() {
       if (isTextSelected) {
         setIsCustomPromptOpen(true);
       }
+      return;
+    }
+
+    if (action === 'create_book_structure') {
+      setIsBookStructureOpen(true);
       return;
     }
 
@@ -824,6 +1213,120 @@ function EditorArea() {
     setIsCustomPromptOpen(false);
     // Restore focus to the editor after the dialog closes
     setTimeout(() => editorRef.current?.focus(), 0);
+  };
+
+  const handleBookStructureClose = () => {
+    setIsBookStructureOpen(false);
+    setBookTitle('');
+    setStoryGoal('');
+    setNumberOfChapters(10);
+    // Restore focus to the editor after the dialog closes
+    setTimeout(() => editorRef.current?.focus(), 0);
+  };
+
+  const handleBookStructureSubmit = async () => {
+    if (!bookTitle.trim() || !storyGoal.trim() || !numberOfChapters) {
+      alert('Please fill in all fields');
+      return;
+    }
+
+    // Guard: Don't send requests if there's no current project
+    if (!currentProject || !currentProject.project_id) {
+      console.warn('Cannot create book structure: No current project selected');
+      return;
+    }
+
+    setIsAiLoading(true);
+    setIsBookStructureOpen(false);
+
+    try {
+      const response = await apiService.post('/ai/gemini-action', {
+        action: 'create_book_structure',
+        numberOfChapters: parseInt(numberOfChapters),
+        bookTitle: bookTitle.trim(),
+        storyGoal: storyGoal.trim(),
+        projectId: currentProject.project_id
+      });
+
+      console.log('Book structure response:', response.data);
+
+      // Handle the response
+      if (response.data.createdFiles && response.data.createdFiles.length > 0) {
+        // Refresh the project files to show the new files
+        const { refreshProjectFiles } = useStore.getState();
+        const refreshResult = await refreshProjectFiles();
+        
+        if (refreshResult.success) {
+          // Open the created files
+          const { openFile } = useStore.getState();
+          
+          // Open the first few files
+          response.data.createdFiles.slice(0, 5).forEach(file => {
+            openFile(file);
+          });
+        } else {
+          console.error('Failed to refresh project files:', refreshResult.error);
+        }
+      }
+
+      // Handle suggestions from the response
+      if (response.data.suggestions) {
+        console.log('Processing book structure suggestions:', response.data.suggestions);
+        
+        // Process different types of suggestions
+        const bookStructureSuggestions = response.data.suggestions.filter(s => s.type === 'full_content');
+        const fullContentSuggestions = response.data.suggestions.filter(s => s.type === 'full_content_suggestion');
+        const editAgentSuggestions = response.data.suggestions.filter(s => s.type === 'edit_agent_suggestion');
+        const improvementSuggestions = response.data.suggestions.filter(s => s.type === 'improvement_suggestions');
+
+        // For full content suggestions, directly add them to the editor
+        if (bookStructureSuggestions.length > 0) {
+          window.dispatchEvent(new CustomEvent('bookStructureSuggestions', {
+            detail: { suggestions: bookStructureSuggestions }
+          }));
+        }
+
+        // For new file content suggestions, dispatch as edit agent suggestions to show inline
+        if (fullContentSuggestions.length > 0) {
+          console.log('Dispatching inline content suggestions for new files:', fullContentSuggestions.length);
+          window.dispatchEvent(new CustomEvent('editAgentSuggestions', {
+            detail: { suggestions: fullContentSuggestions }
+          }));
+        }
+
+        // For edit agent suggestions (existing file improvements), dispatch as edit agent suggestions
+        if (editAgentSuggestions.length > 0) {
+          console.log('Dispatching edit agent suggestions for existing files:', editAgentSuggestions.length);
+          window.dispatchEvent(new CustomEvent('editAgentSuggestions', {
+            detail: { suggestions: editAgentSuggestions }
+          }));
+        }
+
+        // For improvement suggestions, show them as notifications or in a separate panel
+        if (improvementSuggestions.length > 0) {
+          console.log('Improvement suggestions:', improvementSuggestions);
+          // You could add a notification system here
+        }
+      }
+
+      // Clear the form
+      setBookTitle('');
+      setStoryGoal('');
+      setNumberOfChapters(10);
+
+    } catch (error) {
+      console.error('Book Structure Error:', error);
+      alert('Failed to create book structure. Please try again.');
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
+  const handleBookStructureDialogEntered = () => {
+    // Focus the first input field when the dialog animation completes
+    if (bookStructureInputRef.current) {
+      bookStructureInputRef.current.focus();
+    }
   };
 
   const handleCustomPromptSubmit = async () => {
@@ -1058,26 +1561,15 @@ function EditorArea() {
       }]);
     }
 
-    // Clean up decorations and widget
-    const idsToRemove = [decorationData.oldDecorationId].filter(Boolean);
-    if (idsToRemove.length) {
-      editor.deltaDecorations(idsToRemove, []);
-    }
+    // Use comprehensive cleanup with force to ensure decorations are removed
+    cleanupSuggestion(suggestionId, true);
     
-    // Clean up widget
-    const widget = contentWidgets.current[suggestionId];
-    if (widget && editor) {
-      editor.removeContentWidget(widget);
-      delete contentWidgets.current[suggestionId];
-    }
-    
-    delete decorationsRef.current[suggestionId];
-
-    // Remove from store
-    const fileId = decorationData.fileId || useStore.getState().activeFileId;
-    if (fileId) {
-      useStore.getState().removeSuggestion(fileId, suggestionId);
-    }
+    // Force a layout refresh to ensure decorations are visually removed
+    setTimeout(() => {
+      if (editor) {
+        editor.layout();
+      }
+    }, 10);
     
     // Auto-save after acceptance
     const file = useStore.getState().openFiles.find(f => f.file_id === activeFileId);
@@ -1090,36 +1582,21 @@ function EditorArea() {
 
   const handleRejectEditSuggestion = (suggestionId) => {
     if (!editorRef.current) return;
-    
-    const editor = editorRef.current;
-    const decorationData = decorationsRef.current[suggestionId];
-    if (!decorationData) return;
 
-    // Just remove the decoration and widget - keep the original text as is
-    const idsToRemove = [decorationData.oldDecorationId].filter(Boolean);
-    if (idsToRemove.length) {
-      editor.deltaDecorations(idsToRemove, []);
-    }
+    // Use comprehensive cleanup with force to ensure decorations are removed
+    cleanupSuggestion(suggestionId, true);
     
-    // Clean up widget
-    const widget = contentWidgets.current[suggestionId];
-    if (widget && editor) {
-      editor.removeContentWidget(widget);
-      delete contentWidgets.current[suggestionId];
-    }
-    
-    delete decorationsRef.current[suggestionId];
-
-    // Remove from store
-    const fileId = decorationData.fileId || useStore.getState().activeFileId;
-    if (fileId) {
-      useStore.getState().removeSuggestion(fileId, suggestionId);
-    }
+    // Force a layout refresh to ensure decorations are visually removed
+    setTimeout(() => {
+      if (editorRef.current) {
+        editorRef.current.layout();
+      }
+    }, 10);
     
     // Auto-save after rejection
     const file = useStore.getState().openFiles.find(f => f.file_id === activeFileId);
     if (file) {
-      const newFileContent = editor.getModel().getValue();
+      const newFileContent = editorRef.current.getModel().getValue();
       updateFileContent(file.file_id, newFileContent);
       debouncedSave({ ...file, content: newFileContent });
     }
@@ -1134,36 +1611,31 @@ function EditorArea() {
     const decorationData = decorationsRef.current[suggestionId];
     if (!decorationData) return;
 
-    // Remove the old text, keep the new text
-    const currentOldRange = model.getDecorationRange(decorationData.oldDecorationId) || plainToRange(decorationData.originalRange, monaco);
-    if (currentOldRange) {
-      editor.executeEdits('suggestion-accept', [{
-        range: currentOldRange,
-        text: '',
-        forceMoveMarkers: true,
-      }]);
+    // For full content suggestions, we just need to remove decorations
+    // The text is already in the editor and should remain
+    if (decorationData.type === 'full-content') {
+      // Just clean up decorations and widgets - keep the text as is
+    } else {
+      // Regular custom AI suggestion - remove the old text, keep the new text
+      const currentOldRange = model.getDecorationRange(decorationData.oldDecorationId) || decorationData.originalRange;
+      if (currentOldRange) {
+        editor.executeEdits('suggestion-accept', [{
+          range: currentOldRange,
+          text: '',
+          forceMoveMarkers: true,
+        }]);
+      }
     }
 
-    // Clean up decorations and widget
-    const idsToRemove = [decorationData.oldDecorationId, decorationData.newDecorationId].filter(Boolean);
-    if (idsToRemove.length) {
-      editor.deltaDecorations(idsToRemove, []);
-    }
+    // Use comprehensive cleanup with force
+    cleanupSuggestion(suggestionId, true);
     
-    // Clean up widget
-    const widget = contentWidgets.current[suggestionId];
-    if (widget && editor) {
-      editor.removeContentWidget(widget);
-      delete contentWidgets.current[suggestionId];
-    }
-    
-    delete decorationsRef.current[suggestionId];
-
-    // Remove from store
-    const fileId = decorationData.fileId || useStore.getState().activeFileId;
-    if (fileId) {
-      useStore.getState().removeSuggestion(fileId, suggestionId);
-    }
+    // Force a layout refresh to ensure decorations are visually removed
+    setTimeout(() => {
+      if (editor) {
+        editor.layout();
+      }
+    }, 10);
     
     // Auto-save after acceptance
     const file = useStore.getState().openFiles.find(f => f.file_id === activeFileId);
@@ -1182,36 +1654,36 @@ function EditorArea() {
     const decorationData = decorationsRef.current[suggestionId];
     if (!decorationData) return;
 
-    // Remove the new text, keep the old text
-    if (decorationData.deleteRange) {
-      const currentDeleteRange = plainToRange(decorationData.deleteRange, monaco);
+    // For full content suggestions, remove all content (leave file empty)
+    if (decorationData.type === 'full-content') {
+      // Remove all content from the file
+      const fullRange = model.getFullModelRange();
       editor.executeEdits('suggestion-reject', [{
-        range: currentDeleteRange,
+        range: fullRange,
         text: '',
         forceMoveMarkers: true,
       }]);
+    } else {
+      // Regular custom AI suggestion - remove the new text, keep the old text
+      if (decorationData.deleteRange) {
+        const currentDeleteRange = decorationData.deleteRange;
+        editor.executeEdits('suggestion-reject', [{
+          range: currentDeleteRange,
+          text: '',
+          forceMoveMarkers: true,
+        }]);
+      }
     }
 
-    // Clean up decorations and widget
-    const idsToRemove = [decorationData.oldDecorationId, decorationData.newDecorationId].filter(Boolean);
-    if (idsToRemove.length) {
-      editor.deltaDecorations(idsToRemove, []);
-    }
+    // Use comprehensive cleanup with force
+    cleanupSuggestion(suggestionId, true);
     
-    // Clean up widget
-    const widget = contentWidgets.current[suggestionId];
-    if (widget && editor) {
-      editor.removeContentWidget(widget);
-      delete contentWidgets.current[suggestionId];
-    }
-    
-    delete decorationsRef.current[suggestionId];
-
-    // Remove from store
-    const fileId = decorationData.fileId || useStore.getState().activeFileId;
-    if (fileId) {
-      useStore.getState().removeSuggestion(fileId, suggestionId);
-    }
+    // Force a layout refresh to ensure decorations are visually removed
+    setTimeout(() => {
+      if (editor) {
+        editor.layout();
+      }
+    }, 10);
     
     // Auto-save after rejection
     const file = useStore.getState().openFiles.find(f => f.file_id === activeFileId);
@@ -1238,20 +1710,53 @@ function EditorArea() {
     setPreviewTitle('Edit Agent Suggestion');
     setIsPreviewOpen(true);
     
+    // Reset scroll position for new preview if it's from a different file
+    const currentFileId = activeFileId;
+    const shouldResetScroll = previewFileRef.current !== currentFileId;
+    previewFileRef.current = currentFileId;
+    
+    // Always reset scroll position when opening a new preview
+    setTimeout(() => {
+      const previewContainer = document.querySelector('.preview-scroll-container');
+      if (previewContainer) {
+        previewContainer.scrollTop = 0;
+      }
+    }, 100);
+    
     // Special handling for different positioning scenarios
     if (isTopOfFile || isLeftSide) {
       // More aggressive layout updates for problematic cases
       setTimeout(() => {
         if (editorRef.current) {
+          // Preserve editor focus and scrolling state
+          const currentScrollTop = editorRef.current.getScrollTop();
+          const currentScrollLeft = editorRef.current.getScrollLeft();
+          
           editorRef.current.layout();
+          
+          // Restore scroll position
+          editorRef.current.setScrollTop(currentScrollTop);
+          editorRef.current.setScrollLeft(currentScrollLeft);
+          
           if (isTopOfFile) {
             editorRef.current.revealLine(1); // Ensure top is visible
           }
-          // Force a re-render of content widgets
-          editorRef.current.updateOptions({});
+          
+          // Ensure content widgets are still visible
+          Object.values(contentWidgets.current).forEach(widget => {
+            if (widget && editorRef.current) {
+              try {
+                editorRef.current.removeContentWidget(widget);
+                editorRef.current.addContentWidget(widget);
+              } catch (e) {
+                // Widget might not exist anymore, ignore
+              }
+            }
+          });
         }
       }, 100);
       
+      // Additional layout updates to ensure stability
       setTimeout(() => {
         if (editorRef.current) {
           editorRef.current.layout();
@@ -1289,20 +1794,53 @@ function EditorArea() {
     setPreviewTitle('Custom AI Suggestion');
     setIsPreviewOpen(true);
     
+    // Reset scroll position for new preview if it's from a different file
+    const currentFileId = activeFileId;
+    const shouldResetScroll = previewFileRef.current !== currentFileId;
+    previewFileRef.current = currentFileId;
+    
+    // Always reset scroll position when opening a new preview
+    setTimeout(() => {
+      const previewContainer = document.querySelector('.preview-scroll-container');
+      if (previewContainer) {
+        previewContainer.scrollTop = 0;
+      }
+    }, 100);
+    
     // Special handling for different positioning scenarios
     if (isTopOfFile || isLeftSide) {
       // More aggressive layout updates for problematic cases
       setTimeout(() => {
         if (editorRef.current) {
+          // Preserve editor focus and scrolling state
+          const currentScrollTop = editorRef.current.getScrollTop();
+          const currentScrollLeft = editorRef.current.getScrollLeft();
+          
           editorRef.current.layout();
+          
+          // Restore scroll position
+          editorRef.current.setScrollTop(currentScrollTop);
+          editorRef.current.setScrollLeft(currentScrollLeft);
+          
           if (isTopOfFile) {
             editorRef.current.revealLine(1); // Ensure top is visible
           }
-          // Force a re-render of content widgets
-          editorRef.current.updateOptions({});
+          
+          // Ensure content widgets are still visible
+          Object.values(contentWidgets.current).forEach(widget => {
+            if (widget && editorRef.current) {
+              try {
+                editorRef.current.removeContentWidget(widget);
+                editorRef.current.addContentWidget(widget);
+              } catch (e) {
+                // Widget might not exist anymore, ignore
+              }
+            }
+          });
         }
       }, 100);
       
+      // Additional layout updates to ensure stability
       setTimeout(() => {
         if (editorRef.current) {
           editorRef.current.layout();
@@ -1328,6 +1866,20 @@ function EditorArea() {
     setIsPreviewOpen(false);
     setPreviewContent('');
     setPreviewTitle('');
+    previewFileRef.current = null; // Reset file ref
+    
+    // Reset scroll position when closing preview (immediate and delayed)
+    const previewContainer = document.querySelector('.preview-scroll-container');
+    if (previewContainer) {
+      previewContainer.scrollTop = 0;
+    }
+    
+    setTimeout(() => {
+      const previewContainer = document.querySelector('.preview-scroll-container');
+      if (previewContainer) {
+        previewContainer.scrollTop = 0;
+      }
+    }, 100);
     
     // Trigger Monaco editor layout update after preview closes
     setTimeout(() => {
@@ -1341,48 +1893,99 @@ function EditorArea() {
     if (!activeFileId) return;
     
     const fileSuggestions = suggestionsByFile[activeFileId] || [];
-    const activeSuggestions = fileSuggestions.filter(suggestion => {
-      const suggestionId = getSuggestionId(suggestion);
-      return decorationsRef.current[suggestionId];
-    });
     
-    // Process suggestions one by one with a small delay to avoid conflicts
-    activeSuggestions.forEach((suggestion, index) => {
-      setTimeout(() => {
-        const suggestionId = getSuggestionId(suggestion);
-        if (decorationsRef.current[suggestionId]) {
+    // Get ALL suggestions that exist in decorationsRef, not just filtered ones
+    const activeSuggestionIds = Object.keys(decorationsRef.current);
+    console.log(`Found ${activeSuggestionIds.length} active suggestions to accept`);
+    console.log('Active suggestion IDs:', activeSuggestionIds);
+    
+    if (activeSuggestionIds.length === 0) return;
+    
+    // Process all suggestions immediately without delays to avoid race conditions
+    activeSuggestionIds.forEach(suggestionId => {
+      const decorationData = decorationsRef.current[suggestionId];
+      if (decorationData) {
+        // Find the suggestion object to determine type
+        const suggestion = fileSuggestions.find(s => getSuggestionId(s) === suggestionId);
+        
+        if (suggestion) {
           if (suggestion.oldContentFull && suggestion.newContentFull) {
             handleAcceptEditSuggestion(suggestionId);
           } else if (suggestion.originalRange && suggestion.suggestionRange && suggestion.text) {
             handleAcceptCustomSuggestion(suggestionId);
+          } else if (suggestion.type === 'full_content_suggestion' && suggestion.text) {
+            handleAcceptCustomSuggestion(suggestionId);
           }
+        } else {
+          // Fallback: just clean up the decoration/widget
+          cleanupSuggestion(suggestionId, true);
         }
-      }, index * 50); // 50ms delay between each
+      }
     });
+    
+    // Final comprehensive cleanup to ensure everything is removed
+    setTimeout(() => {
+      cleanupAllSuggestions();
+      
+      // Auto-save after acceptance
+      const file = useStore.getState().openFiles.find(f => f.file_id === activeFileId);
+      if (file && editorRef.current) {
+        const newFileContent = editorRef.current.getModel().getValue();
+        updateFileContent(file.file_id, newFileContent);
+        debouncedSave({ ...file, content: newFileContent });
+      }
+    }, 50);
   };
 
   const handleRejectAll = () => {
     if (!activeFileId) return;
     
     const fileSuggestions = suggestionsByFile[activeFileId] || [];
-    const activeSuggestions = fileSuggestions.filter(suggestion => {
-      const suggestionId = getSuggestionId(suggestion);
-      return decorationsRef.current[suggestionId];
-    });
     
-    // Process suggestions one by one with a small delay to avoid conflicts
-    activeSuggestions.forEach((suggestion, index) => {
-      setTimeout(() => {
-        const suggestionId = getSuggestionId(suggestion);
-        if (decorationsRef.current[suggestionId]) {
+    // Get ALL suggestions that exist in decorationsRef, not just filtered ones
+    const activeSuggestionIds = Object.keys(decorationsRef.current);
+    console.log(`Found ${activeSuggestionIds.length} active suggestions to reject`);
+    console.log('Active suggestion IDs:', activeSuggestionIds);
+    
+    if (activeSuggestionIds.length === 0) return;
+    
+    // Process all suggestions immediately without delays to avoid race conditions
+    activeSuggestionIds.forEach(suggestionId => {
+      const decorationData = decorationsRef.current[suggestionId];
+      if (decorationData) {
+        // Find the suggestion object to determine type
+        const suggestion = fileSuggestions.find(s => getSuggestionId(s) === suggestionId);
+        
+        if (suggestion) {
           if (suggestion.oldContentFull && suggestion.newContentFull) {
-            handleRejectEditSuggestion(suggestionId);
+            // Edit agent suggestion - just clean up, don't modify content
+            cleanupSuggestion(suggestionId, true);
           } else if (suggestion.originalRange && suggestion.suggestionRange && suggestion.text) {
+            // Custom AI suggestion - remove the added text
+            handleRejectCustomSuggestion(suggestionId);
+          } else if (suggestion.type === 'full_content_suggestion' && suggestion.text) {
+            // Full content suggestion - remove all content
             handleRejectCustomSuggestion(suggestionId);
           }
+        } else {
+          // Fallback: just clean up the decoration/widget
+          cleanupSuggestion(suggestionId, true);
         }
-      }, index * 50); // 50ms delay between each
+      }
     });
+    
+    // Final comprehensive cleanup to ensure everything is removed
+    setTimeout(() => {
+      cleanupAllSuggestions();
+      
+      // Auto-save after rejection
+      const file = useStore.getState().openFiles.find(f => f.file_id === activeFileId);
+      if (file && editorRef.current) {
+        const newFileContent = editorRef.current.getModel().getValue();
+        updateFileContent(file.file_id, newFileContent);
+        debouncedSave({ ...file, content: newFileContent });
+      }
+    }, 50);
   };
 
   return (
@@ -1479,15 +2082,15 @@ function EditorArea() {
             />
           )}
 
-          {/* Bottom Action Buttons */}
-          {suggestions.length > 0 && (
+          {/* Bottom Action Buttons - Only show for edit-agent suggestions with multiple items */}
+          {suggestions.length > 1 && suggestions.some(suggestion => suggestion.oldContentFull && suggestion.newContentFull) && (
             <Box sx={{
               position: 'absolute',
               bottom: 20,
               right: isPreviewOpen ? 30 : 20, // Adjust for preview panel
               display: 'flex',
               gap: 1,
-              zIndex: 1000,
+              zIndex: 1001, // Higher z-index to appear above widgets
               background: 'rgba(30, 30, 30, 0.9)',
               borderRadius: 1,
               p: 1,
@@ -1510,7 +2113,7 @@ function EditorArea() {
                   }
                 }}
               >
-                ✓ Accept All ({suggestions.length})
+                ✓ Accept All ({suggestions.filter(s => s.oldContentFull && s.newContentFull).length})
               </Button>
               <Button
                 variant="contained"
@@ -1528,7 +2131,7 @@ function EditorArea() {
                   }
                 }}
               >
-                ✗ Reject All ({suggestions.length})
+                ✗ Reject All ({suggestions.filter(s => s.oldContentFull && s.newContentFull).length})
               </Button>
             </Box>
           )}
@@ -1566,17 +2169,34 @@ function EditorArea() {
             </Box>
             
             {/* Preview Content */}
-            <Box sx={{ 
-              flexGrow: 1, 
-              p: 2, 
-              overflow: 'auto',
-              fontFamily: 'monospace',
-              fontSize: '12px',
-              lineHeight: 1.4,
-              color: '#d4d4d4',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word'
-            }}>
+            <Box 
+              className="preview-scroll-container"
+              sx={{ 
+                flexGrow: 1, 
+                p: 2, 
+                overflow: 'auto',
+                fontFamily: 'monospace',
+                fontSize: '12px',
+                lineHeight: 1.4,
+                color: '#d4d4d4',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                maxHeight: 'calc(100vh - 200px)', // Ensure scrolling works
+                '&::-webkit-scrollbar': {
+                  width: '8px',
+                },
+                '&::-webkit-scrollbar-track': {
+                  background: '#2d2d2d',
+                },
+                '&::-webkit-scrollbar-thumb': {
+                  background: '#555',
+                  borderRadius: '4px',
+                },
+                '&::-webkit-scrollbar-thumb:hover': {
+                  background: '#777',
+                },
+              }}
+            >
               {previewContent}
             </Box>
           </Box>
@@ -1590,7 +2210,7 @@ function EditorArea() {
             autoFocus
             margin="dense"
             id="custom-prompt"
-            label="Enter your instruction (e.g., 'refactor this function to be more efficient')"
+            label="Enter your instruction (e.g., 'make this paragraph clearer')"
             type="text"
             fullWidth
             variant="outlined"
@@ -1607,6 +2227,66 @@ function EditorArea() {
         <DialogActions>
           <Button onClick={handleCustomPromptClose}>Cancel</Button>
           <Button onClick={handleCustomPromptSubmit} variant="contained">Submit</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={isBookStructureOpen} onClose={handleBookStructureClose} fullWidth maxWidth="md" TransitionProps={{ onEntered: handleBookStructureDialogEntered }}>
+        <DialogTitle>Create Book Structure</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 2, color: 'text.secondary' }}>
+            This will create a complete book structure with prologue, chapters, epilogue, and author bio files. AI will generate starter content for each section.
+          </Typography>
+          
+          <TextField
+            inputRef={bookStructureInputRef}
+            autoFocus
+            margin="dense"
+            id="book-title"
+            label="Book Title"
+            type="text"
+            fullWidth
+            variant="outlined"
+            value={bookTitle}
+            onChange={(e) => setBookTitle(e.target.value)}
+            sx={{ mb: 2 }}
+          />
+          
+          <TextField
+            margin="dense"
+            id="story-goal"
+            label="Story Goal / High-level Description"
+            type="text"
+            fullWidth
+            variant="outlined"
+            multiline
+            rows={3}
+            value={storyGoal}
+            onChange={(e) => setStoryGoal(e.target.value)}
+            placeholder="e.g., A thrilling adventure about a young wizard discovering their magical powers and saving the world from an ancient evil..."
+            sx={{ mb: 2 }}
+          />
+          
+          <TextField
+            margin="dense"
+            id="number-of-chapters"
+            label="Number of Chapters"
+            type="number"
+            variant="outlined"
+            value={numberOfChapters}
+            onChange={(e) => setNumberOfChapters(Math.max(1, parseInt(e.target.value) || 1))}
+            inputProps={{ min: 1, max: 50 }}
+            sx={{ width: '200px' }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleBookStructureClose}>Cancel</Button>
+          <Button 
+            onClick={handleBookStructureSubmit} 
+            variant="contained"
+            disabled={!bookTitle.trim() || !storyGoal.trim() || isAiLoading}
+          >
+            {isAiLoading ? 'Creating...' : 'Create Book Structure'}
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>
