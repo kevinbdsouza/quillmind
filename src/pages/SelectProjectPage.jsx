@@ -86,7 +86,7 @@ function SelectProjectPage() {
                 projects.map((project, index) => (
                   <React.Fragment key={project.project_id}>
                     <ListItem disablePadding>
-                      <ListItemButton onClick={() => handleSelectProject(project)} sx={{ p: 2 }}>
+                      <ListItemButton onClick={() => handleSelectProject(project)} sx={{ p: 2, borderRadius: 1 }}>
                         <ListItemIcon>
                           <FolderIcon />
                         </ListItemIcon>

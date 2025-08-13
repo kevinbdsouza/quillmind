@@ -79,19 +79,7 @@ function RegisterPage() {
 
   return (
     <Container component="main" maxWidth="xs">
-      <Paper
-        elevation={6}
-        sx={{
-          marginTop: 8,
-          padding: 4,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          backgroundColor: '#FAF9F6',
-          color: '#1A202C',
-          borderRadius: 2,
-        }}
-      >
+      <Paper elevation={6} sx={{ mt: 8, p: 4, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
         <Avatar sx={{ m: 1, bgcolor: 'secondary.main' }}>
           <LockOutlinedIcon />
         </Avatar>
@@ -150,13 +138,7 @@ function RegisterPage() {
             disabled={loading}
             sx={textFieldStyles}
           />
-          <Button
-            type="submit"
-            fullWidth
-            variant="contained"
-            sx={{ mt: 3, mb: 2 }}
-            disabled={loading}
-          >
+          <Button type="submit" fullWidth variant="contained" sx={{ mt: 3, mb: 2 }} disabled={loading}>
             {loading ? <CircularProgress size={24} color="inherit" /> : 'Sign Up'}
           </Button>
           <Grid container justifyContent="flex-end">

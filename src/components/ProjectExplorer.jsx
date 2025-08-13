@@ -45,23 +45,23 @@ const FILE_ICON = <ArticleIcon sx={{ fontSize: '1rem', color: '#E0E0E0' }} />;
 
 const StyledTreeItem = styled(TreeItem)(({ theme }) => ({
   [`& .${treeItemClasses.content}`]: {
-    padding: theme.spacing(0.25, 0.5),
-    margin: theme.spacing(0.1, 0),
+    padding: theme.spacing(0.5, 0.75),
+    margin: theme.spacing(0.25, 0),
     borderRadius: theme.shape.borderRadius,
     '&:hover': {
-      backgroundColor: 'rgba(255, 255, 255, 0.08)',
+      backgroundColor: 'rgba(148,163,184,0.08)'
     },
     '&.Mui-selected, &.Mui-selected:hover, &.Mui-selected.Mui-focused': {
-      backgroundColor: 'rgba(255, 255, 255, 0.12)', 
-      color: 'inherit',
-    },
+      backgroundColor: 'rgba(124,92,252,0.12)',
+      color: 'inherit'
+    }
   },
   [`& .${treeItemClasses.label}`]: {
     fontWeight: 'inherit',
     color: 'inherit',
-    paddingLeft: theme.spacing(0.5),
-    fontSize: '0.875rem',
-  },
+    paddingLeft: theme.spacing(0.75),
+    fontSize: '0.9rem'
+  }
 }));
 
 // Simplified input component for creation

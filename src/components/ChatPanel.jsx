@@ -256,11 +256,13 @@ function ChatPanel() {
 
   return (
     <Box sx={{ 
-      p: 2, 
-      height: '100%', 
-      display: 'flex', 
+      p: 2,
+      height: '100%',
+      display: 'flex',
       flexDirection: 'column',
-      bgcolor: '#2C2C2C'
+      bgcolor: 'background.paper',
+      borderLeft: '1px solid',
+      borderColor: 'divider'
     }}>
       {/* Header with title and new chat button */}
       <Box sx={{ 
@@ -327,7 +329,7 @@ function ChatPanel() {
       </Box>
 
       {/* Chat messages area */}
-      <Box 
+      <Box
         ref={chatBoxRef}
         sx={{ 
           flexGrow: 1, 
@@ -358,8 +360,10 @@ function ChatPanel() {
                 sx={{
                     p: '10px 14px',
                     borderRadius: '16px',
-                    bgcolor: 'background.default',
+                    bgcolor: msg.author === 'AI' ? 'background.default' : 'rgba(124,92,252,0.16)',
                     color: 'text.primary',
+                    border: '1px solid',
+                    borderColor: msg.author === 'AI' ? 'divider' : 'rgba(124,92,252,0.35)',
                     maxWidth: '80%'
                 }}
             >

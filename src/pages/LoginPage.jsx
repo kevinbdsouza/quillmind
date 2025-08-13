@@ -85,19 +85,13 @@ function LoginPage() {
 
   return (
     <Container component="main" maxWidth="xs">
-      <Paper
-        elevation={6}
-        sx={{
-          marginTop: 8,
-          padding: 4,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          backgroundColor: '#FAF9F6',
-          color: '#1A202C',
-          borderRadius: 2,
-        }}
-      >
+      <Paper elevation={6} sx={{
+        mt: 8,
+        p: 4,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center'
+      }}>
         <Avatar sx={{ m: 1, bgcolor: 'secondary.main' }}>
           <LockOutlinedIcon />
         </Avatar>
@@ -139,13 +133,7 @@ function LoginPage() {
             sx={textFieldStyles}
           />
           {/* Add Remember Me checkbox later if needed */}
-          <Button
-            type="submit"
-            fullWidth
-            variant="contained"
-            sx={{ mt: 3, mb: 2 }}
-            disabled={loading}
-          >
+          <Button type="submit" fullWidth variant="contained" sx={{ mt: 3, mb: 2 }} disabled={loading}>
             {loading ? <CircularProgress size={24} color="inherit" /> : 'Sign In'}
           </Button>
           <Grid container justifyContent="flex-end">

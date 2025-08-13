@@ -1,6 +1,6 @@
 // src/App.jsx
 import React, { useCallback, useRef } from 'react';
-import { Box, createTheme, ThemeProvider } from '@mui/material';
+import { Box, ThemeProvider, Paper } from '@mui/material';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import CssBaseline from '@mui/material/CssBaseline';
 import Typography from '@mui/material/Typography';
@@ -15,24 +15,7 @@ import SelectProjectPage from './pages/SelectProjectPage.jsx';
 import CreateProjectPage from './pages/CreateProjectPage.jsx';
 import useStore from './store';
 
-const darkTheme = createTheme({
-  palette: {
-    mode: 'dark',
-    primary: {
-      main: '#E88352',
-    },
-    secondary: {
-      main: '#90caf9',
-    },
-    background: {
-      default: '#121212',
-      paper: '#1e1e1e',
-    },
-  },
-  typography: {
-    fontFamily: 'Roboto, sans-serif',
-  },
-});
+import darkTheme from './theme';
 
 // Resize handle component
 function ResizeHandle({ onResize, orientation = 'vertical' }) {
@@ -77,18 +60,18 @@ function ResizeHandle({ onResize, orientation = 'vertical' }) {
     <Box
       onMouseDown={handleMouseDown}
       sx={{
-        width: orientation === 'vertical' ? '6px' : '100%',
-        height: orientation === 'vertical' ? '100%' : '6px',
-        backgroundColor: 'rgba(255, 255, 255, 0.05)',
+        width: orientation === 'vertical' ? '8px' : '100%',
+        height: orientation === 'vertical' ? '100%' : '8px',
+        background: 'linear-gradient(180deg, rgba(148,163,184,0.12), rgba(148,163,184,0.06))',
         cursor: orientation === 'vertical' ? 'col-resize' : 'row-resize',
         position: 'relative',
         flexShrink: 0,
-        transition: 'background-color 0.2s ease',
+        transition: 'background-color 0.2s ease, opacity 0.2s ease',
         '&:hover': {
-          backgroundColor: 'rgba(255, 255, 255, 0.15)',
+          background: 'linear-gradient(180deg, rgba(124,92,252,0.24), rgba(124,92,252,0.12))',
         },
         '&:active': {
-          backgroundColor: 'rgba(255, 255, 255, 0.25)',
+          background: 'linear-gradient(180deg, rgba(124,92,252,0.35), rgba(124,92,252,0.2))',
         },
         // Larger hit area for easier grabbing
         '&::before': {
@@ -100,6 +83,17 @@ function ResizeHandle({ onResize, orientation = 'vertical' }) {
           bottom: 0,
           backgroundColor: 'transparent',
           cursor: orientation === 'vertical' ? 'col-resize' : 'row-resize',
+        },
+        '&::after': {
+          content: '""',
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: orientation === 'vertical' ? '2px' : '24px',
+          height: orientation === 'vertical' ? '24px' : '2px',
+          borderRadius: '2px',
+          backgroundColor: 'rgba(148,163,184,0.35)'
         }
       }}
     />
@@ -147,19 +141,16 @@ function AppHeader() {
   const showChangeProjectButton = location.pathname !== '/select-project';
 
   return (
-    <Box 
-      component="header"
-      sx={{ 
-        p: 2,
-        backgroundColor: '#FDF6E3',
-        color: '#1A202C',
-        borderBottom: '1px solid #EAE0CC',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        boxShadow: '0 2px 4px -1px rgba(0,0,0,0.1)',
-      }}
-    >
+    <Paper component="header" elevation={0} sx={{
+      p: 2,
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      borderBottom: '1px solid',
+      borderColor: 'divider',
+      background: 'linear-gradient(180deg, rgba(17,22,28,0.9), rgba(17,22,28,0.85))',
+      backdropFilter: 'saturate(140%) blur(6px)'
+    }}>
       <Box display="flex" alignItems="center">
         <img 
           src="/logo.png" 
@@ -184,7 +175,7 @@ function AppHeader() {
       </Box>
       <Box>
         {showChangeProjectButton &&
-          <Button variant="outlined" size="small" onClick={handleChangeProject} sx={{ mr: 1, color: '#1A202C', borderColor: '#1A202C' }}>
+          <Button variant="outlined" size="small" onClick={handleChangeProject} sx={{ mr: 1 }}>
             Change Project
           </Button>
         }
@@ -192,7 +183,7 @@ function AppHeader() {
           Sign Out
         </Button>
       </Box>
-    </Box>
+    </Paper>
   );
 }
 
